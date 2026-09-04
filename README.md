@@ -1,2 +1,5 @@
-# runner
-Docker runner image(s) for Midkernel playbook execution
+# midkernel/runner
+
+Public Docker runner image(s) for executing Midkernel playbooks.
+
+Status: shell.
