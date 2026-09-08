@@ -19,7 +19,7 @@ def test_defaults():
     assert cfg.artifacts_bucket == "midkernel-dev-artifacts"
     assert cfg.artifact_key == "runs/run_abc-1/report.md"
     assert cfg.s3_uri == "s3://midkernel-dev-artifacts/runs/run_abc-1/report.md"
-    assert cfg.openrouter_model == "openrouter/moonshotai/kimi-k3"
+    assert cfg.openrouter_model == "moonshotai/kimi-k3"
     assert cfg.openrouter_variant == "medium"
     assert cfg.openrouter_secret_id == "midkernel/dev/harness/openrouter-api-key"
     assert cfg.github_secret_id == "midkernel/dev/harness/github-token"
@@ -51,3 +51,27 @@ def test_bad_profile():
 def test_prefix_without_slash():
     cfg = load_config(_base(ARTIFACTS_PREFIX="runs"))
     assert cfg.artifact_key == "runs/run_abc-1/report.md"
+
+
+def test_app_env_aliases():
+    cfg = load_config(
+        _base(
+            PLAYBOOK="solana-validator-security",
+            PROFILE="max",
+            THREAT="runtime",
+            MODEL="moonshotai/kimi-k3",
+            ARTIFACTS_KEY="runs/run_abc-1/report.md",
+        )
+    )
+    assert cfg.playbook_slug == "solana-validator-security"
+    assert cfg.scan_profile == "max"
+    assert cfg.threat_pin == "runtime"
+    assert cfg.openrouter_model == "moonshotai/kimi-k3"
+    assert cfg.artifact_key == "runs/run_abc-1/report.md"
+
+
+def test_optional_run_context():
+    from midkernel_runner.config import load_optional_run_context
+
+    assert load_optional_run_context(_base()) is not None
+    assert load_optional_run_context({"KIMI_API_KEY": "x"}) is None
