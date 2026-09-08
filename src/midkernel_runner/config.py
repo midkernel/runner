@@ -16,10 +16,9 @@ DEFAULT_PLAYBOOKS_OWNER = "midkernel"
 DEFAULT_PLAYBOOKS_NAME = "playbooks"
 DEFAULT_PLAYBOOKS_REF = "main"
 
-# OpenRouter slug for Kimi K3. OpenCode composes provider/model as
-# openrouter/<openrouter-slug>. `--variant max` is the Kimi K3 Max effort.
-DEFAULT_OPENROUTER_MODEL = "openrouter/moonshotai/kimi-k3"
-DEFAULT_OPENROUTER_VARIANT = "max"
+# OpenRouter vendor/model slug (app + playbooks). Kimi CLI config aliases also
+# accept openrouter/<slug> when agentflow passes that as --model.
+DEFAULT_OPENROUTER_MODEL = "moonshotai/kimi-k3"
 
 DEFAULT_OPENROUTER_SECRET = "midkernel/dev/harness/openrouter-api-key"
 DEFAULT_GITHUB_SECRET = "midkernel/dev/harness/github-token"
@@ -28,12 +27,6 @@ RUN_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
-
-PROFILE_VARIANT = {
-    "low": "low",
-    "balanced": "medium",
-    "max": "max",
-}
 
 PROFILE_TIMEOUT_SECONDS = {
     "low": 15 * 60,
@@ -66,7 +59,6 @@ class RunConfig:
     artifacts_bucket: str
     artifacts_prefix: str
     openrouter_model: str
-    openrouter_variant: str
     aws_region: str
     openrouter_secret_id: str
     github_secret_id: str
@@ -77,10 +69,13 @@ class RunConfig:
     workdir: str
     outputs_dir: str
     timeout_seconds: int
+    artifacts_key_override: str | None = None
 
     @property
     def repo_dir(self) -> str:
-        return os.path.join(self.workdir, "repo")
+        # agentflow ECS cwd is WORKDIR (/workspace). Clone there so `kimi`
+        # sees the tree without a hidden repo/ subdirectory.
+        return self.workdir
 
     @property
     def report_path(self) -> str:
@@ -88,6 +83,8 @@ class RunConfig:
 
     @property
     def artifact_key(self) -> str:
+        if self.artifacts_key_override:
+            return self.artifacts_key_override.lstrip("/")
         prefix = self.artifacts_prefix if self.artifacts_prefix.endswith("/") else f"{self.artifacts_prefix}/"
         return f"{prefix}{self.run_id}/report.md"
 
@@ -115,6 +112,29 @@ def _optional(name: str, env: dict[str, str | None], default: str | None = None)
     return value if value else default
 
 
+def _first(env: dict[str, str | None], *names: str, default: str | None = None) -> str | None:
+    for name in names:
+        value = _optional(name, env)
+        if value:
+            return value
+    return default
+
+
+def load_optional_run_context(environ: dict[str, str] | None = None) -> dict[str, str] | None:
+    """Return a context dict when Midkernel scan env is present; else None.
+
+    agentflow may launch this image with only Kimi credentials. Midkernel
+    artifact/clone setup runs only when RUN_ID + GitHub repo are set.
+    """
+    env: dict[str, str | None] = dict(os.environ if environ is None else environ)
+    run_id = _optional("RUN_ID", env)
+    owner = _optional("GITHUB_OWNER", env)
+    name = _optional("GITHUB_NAME", env)
+    if run_id and owner and name:
+        return {"RUN_ID": run_id, "GITHUB_OWNER": owner, "GITHUB_NAME": name}
+    return None
+
+
 def load_config(environ: dict[str, str] | None = None) -> RunConfig:
     env: dict[str, str | None] = dict(os.environ if environ is None else environ)
 
@@ -129,24 +149,23 @@ def load_config(environ: dict[str, str] | None = None) -> RunConfig:
     if not REPO_RE.match(name):
         raise ConfigError("GITHUB_NAME is not a valid GitHub repository name")
 
-    slug = _optional("PLAYBOOK_SLUG", env, DEFAULT_PLAYBOOK_SLUG) or DEFAULT_PLAYBOOK_SLUG
+    slug = _first(env, "PLAYBOOK_SLUG", "PLAYBOOK", default=DEFAULT_PLAYBOOK_SLUG) or DEFAULT_PLAYBOOK_SLUG
     if not SLUG_RE.match(slug):
         raise ConfigError("PLAYBOOK_SLUG must be a lowercase kebab-case slug")
 
-    profile = (_optional("SCAN_PROFILE", env, DEFAULT_PROFILE) or DEFAULT_PROFILE).lower()
+    profile = (_first(env, "SCAN_PROFILE", "PROFILE", default=DEFAULT_PROFILE) or DEFAULT_PROFILE).lower()
     if profile not in SCAN_PROFILES:
         raise ConfigError(f"SCAN_PROFILE must be one of {', '.join(SCAN_PROFILES)}")
 
-    threat = _optional("THREAT_PIN", env)
+    threat = _first(env, "THREAT_PIN", "THREAT")
     if threat and len(threat) > THREAT_PIN_MAX_LENGTH:
         raise ConfigError(f"THREAT_PIN exceeds {THREAT_PIN_MAX_LENGTH} characters")
 
     prefix = _optional("ARTIFACTS_PREFIX", env, DEFAULT_PREFIX) or DEFAULT_PREFIX
-    model = _optional("OPENROUTER_MODEL", env, DEFAULT_OPENROUTER_MODEL) or DEFAULT_OPENROUTER_MODEL
+    model = _first(env, "OPENROUTER_MODEL", "MODEL", default=DEFAULT_OPENROUTER_MODEL) or DEFAULT_OPENROUTER_MODEL
     if "/" not in model:
-        raise ConfigError("OPENROUTER_MODEL must be provider/model (e.g. openrouter/moonshotai/kimi-k3)")
+        raise ConfigError("OPENROUTER_MODEL must be vendor/model (e.g. moonshotai/kimi-k3)")
 
-    variant = _optional("OPENROUTER_VARIANT", env) or PROFILE_VARIANT[profile]
     timeout = int(_optional("AGENT_TIMEOUT_SECONDS", env, str(PROFILE_TIMEOUT_SECONDS[profile])) or PROFILE_TIMEOUT_SECONDS[profile])
 
     return RunConfig(
@@ -159,7 +178,6 @@ def load_config(environ: dict[str, str] | None = None) -> RunConfig:
         artifacts_bucket=_optional("ARTIFACTS_BUCKET", env, DEFAULT_BUCKET) or DEFAULT_BUCKET,
         artifacts_prefix=prefix,
         openrouter_model=model,
-        openrouter_variant=variant,
         aws_region=_optional("AWS_REGION", env, DEFAULT_REGION) or DEFAULT_REGION,
         openrouter_secret_id=_optional("OPENROUTER_SECRET_ID", env, DEFAULT_OPENROUTER_SECRET)
         or DEFAULT_OPENROUTER_SECRET,
@@ -171,4 +189,5 @@ def load_config(environ: dict[str, str] | None = None) -> RunConfig:
         workdir=_optional("WORKDIR", env, "/workspace") or "/workspace",
         outputs_dir=_optional("OUTPUTS_DIR", env, "/outputs") or "/outputs",
         timeout_seconds=timeout,
+        artifacts_key_override=_optional("ARTIFACTS_KEY", env),
     )

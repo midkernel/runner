@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "midkernel-runner"
 version = "0.1.0"
-description = "ECS Fargate agent image for Midkernel Scan one-shots (OpenCode + OpenRouter)."
+description = "agentflow ECS node/agent image for Midkernel (Kimi CLI + OpenRouter)."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -21,6 +21,8 @@ dev = [
 
 [project.scripts]
 midkernel-runner = "midkernel_runner.main:main"
+midkernel-publish-report = "midkernel_runner.publish:main"
+midkernel-node-prepare = "midkernel_runner.node:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/midkernel_runner"]
