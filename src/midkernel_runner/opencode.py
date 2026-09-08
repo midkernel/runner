@@ -1,14 +1,7 @@
-"""Invoke OpenCode as a one-shot harness against the cloned repo.
+"""Deferred OpenCode harness (not installed on the node image).
 
-Why OpenCode-only (not an agentflow multi-node graph) for security-review:
-the public playbook is kind=single-skill / one-shot. agentflow's ECS runner
-is a *control plane* that RunTasks images; Midkernel already owns that on
-the app side. Running agentflow-inside-the-task to launch nested Fargate
-tasks would ignore Midkernel's explicit networking and double Spot cost.
-agentflow also has no OpenCode adapter (codex/claude/kimi/pi only).
-
-This image still installs agentflow so it can be the ECR target image for
-future multi-node playbooks (`target.image` = midkernel-agentflow-agents).
+James lock (direction change): the ECR image is a native agentflow ECS
+node (Kimi CLI + OpenRouter). OpenCode is optional and not on PATH.
 """
 
 from __future__ import annotations

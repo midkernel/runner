@@ -9,6 +9,56 @@ def test_clone_url_redacts_via_x_access_token():
     assert url == "https://x-access-token:ghs_secret@github.com/midkernel/playbooks.git"
 
 
+def test_clone_into_existing_empty_workdir(tmp_path):
+    from midkernel_runner.clone import clone_repository
+    from midkernel_runner.secrets import HarnessSecrets
+
+    cfg = load_config(
+        {
+            "RUN_ID": "r1",
+            "GITHUB_OWNER": "midkernel",
+            "GITHUB_NAME": "playbooks",
+            "WORKDIR": str(tmp_path),
+        }
+    )
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        (tmp_path / ".git").mkdir()
+        return Result()
+
+    dest = clone_repository(cfg, HarnessSecrets("k", "ghs_x"), run=fake_run)
+    assert dest == tmp_path
+    assert str(tmp_path) in calls[0]
+    assert "--depth" in calls[0]
+
+
+def test_clone_skips_when_git_present(tmp_path):
+    from midkernel_runner.clone import clone_repository
+    from midkernel_runner.secrets import HarnessSecrets
+
+    (tmp_path / ".git").mkdir()
+    cfg = load_config(
+        {
+            "RUN_ID": "r1",
+            "GITHUB_OWNER": "midkernel",
+            "GITHUB_NAME": "playbooks",
+            "WORKDIR": str(tmp_path),
+        }
+    )
+
+    def boom(*a, **k):
+        raise AssertionError("should not clone")
+
+    assert clone_repository(cfg, HarnessSecrets("k", "t"), run=boom) == tmp_path
+
+
 class FakeS3:
     def __init__(self):
         self.calls = []
