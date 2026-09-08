@@ -116,10 +116,30 @@ App RunTask should override `RUN_ID`, `GITHUB_OWNER`, `GITHUB_NAME`, `PLAYBOOK_S
 
 `.github/workflows/ci.yml`:
 
-- PR / push: unit tests + `docker build` (no AWS).
-- `main` and `workflow_dispatch`: OIDC assume `arn:aws:iam::489470371031:role/midkernel-github-actions`, push `:<sha>` and `:latest`.
+- PR / push: unit tests + `docker build` (no AWS) + print non-secret GitHub OIDC claims (`iss`, `aud`, `sub`, `repository`, `repository_owner`, `ref`, `workflow`, `job_workflow_ref` only; never the raw JWT).
+- `main` and `workflow_dispatch`: same claims debug, then OIDC assume `arn:aws:iam::489470371031:role/midkernel-github-actions` (`audience: sts.amazonaws.com`), push `:<sha>` and `:latest`.
 
-**IT:** that role’s trust currently lists `midkernel/infra` and `midkernel/app`. Add `repo:midkernel/runner:*` before the first successful push. This repo does not change IAM.
+**Expected vs actual OIDC `sub` (this repo, created 2026-09-04):**
+
+| | `sub` |
+| --- | --- |
+| What Infra#4 Terraform trusts today (`StringLike`) | `repo:midkernel/runner:*` → e.g. `repo:midkernel/runner:ref:refs/heads/main` |
+| What GitHub actually issues (immutable default for new repos) | `repo:midkernel@324066512/runner@1357082961:ref:refs/heads/main` |
+| Confirmed via `GET /repos/midkernel/runner/actions/oidc/customization/sub` | `use_default=true`, `sub_claim_prefix=repo:midkernel@324066512/runner@1357082961` |
+
+This is **not** an org `include_claim_keys` customization (`use_default` is true). It is GitHub’s [immutable subject](https://docs.github.com/en/actions/reference/openid-connect-reference#immutable-subject-claims) format for repositories created after 2026-07-15. `repo:midkernel/runner:*` cannot match `repo:midkernel@…`.
+
+**IT (James lock: IaC only — `midkernel/infra`, no console IAM):** update `module.oidc_github_actions` `allowed_sub_patterns` (keep `StringLike` + `aud=sts.amazonaws.com`) to the immutable prefixes. Same org/repos created 2026-09-04:
+
+```hcl
+allowed_sub_patterns = [
+  "repo:midkernel@324066512/infra@1357082965:*",
+  "repo:midkernel@324066512/app@1357082937:*",
+  "repo:midkernel@324066512/runner@1357082961:*",
+]
+```
+
+Files: `environments/dev/main.tf` and the default in `modules/oidc_github_actions/variables.tf`. Do not drop `sts.amazonaws.com` from the provider `client_id_list`. This repo does not change IAM.
 
 Manual push (after `aws ecr get-login-password`):
 
