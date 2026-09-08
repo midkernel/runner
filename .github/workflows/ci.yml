@@ -1,12 +1,19 @@
 # Build the Midkernel agent image. Push to ECR when OIDC is available.
 #
-# IT: role arn:aws:iam::489470371031:role/midkernel-github-actions currently
-# trusts midkernel/infra + midkernel/app. Add midkernel/runner to the trust
-# policy before the ecr job can succeed:
+# IT / midkernel/infra (James lock: IaC only — do not console-edit IAM):
+# Repos created after 2026-07-15 emit GitHub's immutable OIDC `sub`:
+#   repo:OWNER@OWNER-ID/REPO@REPO-ID:ref:refs/heads/BRANCH
+# Terraform currently trusts the pre-2026 name-only shape:
+#   repo:midkernel/{infra,app,runner}:*
+# Those patterns do not match this JWT. This repo (created 2026-09-04):
+#   use_default=true (not an org include_claim_keys customization)
+#   sub_claim_prefix=repo:midkernel@324066512/runner@1357082961
+# Replace allowed_sub_patterns with the immutable prefixes (keep StringLike):
+#   repo:midkernel@324066512/infra@1357082965:*
+#   repo:midkernel@324066512/app@1357082937:*
+#   repo:midkernel@324066512/runner@1357082961:*
 #
-#   repo:midkernel/runner:*
-#
-# Do not invent AWS changes from this repo.
+# Do not invent AWS changes from this repo. Do not commit AWS keys.
 name: CI
 
 on:
@@ -51,6 +58,17 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  oidc-claims:
+    name: OIDC claims (debug)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Print non-secret GitHub OIDC claims
+        run: python3 scripts/print_oidc_claims.py
+
   ecr:
     name: Push to ECR
     needs: [test, image]
@@ -61,11 +79,15 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+      - name: Print non-secret GitHub OIDC claims
+        run: python3 scripts/print_oidc_claims.py
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ env.OIDC_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
+          role-session-name: midkernel-runner-ecr
       - name: Login to ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
