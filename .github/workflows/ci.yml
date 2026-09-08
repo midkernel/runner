@@ -1,0 +1,103 @@
+# Publication requires independently approved account configuration and dedicated-role activation.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: midkernel-agentflow-agents
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  publisher-readiness:
+    name: Publisher activation
+    if: github.repository == 'midkernel/runner' && github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      enabled: ${{ steps.activation.outputs.enabled }}
+      role_arn: ${{ steps.activation.outputs.role_arn }}
+      account_id: ${{ steps.activation.outputs.account_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check explicit publisher activation
+        id: activation
+        env:
+          ECR_PUBLISHER_ROLE_ARN: ${{ vars.ECR_PUBLISHER_ROLE_ARN }}
+          MIDKERNEL_APPROVED_AWS_ACCOUNT_ID: ${{ vars.MIDKERNEL_APPROVED_AWS_ACCOUNT_ID }}
+        run: python3 scripts/check_publisher_activation.py
+
+  image:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: midkernel-agentflow-agents:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  ecr:
+    name: Push to ECR
+    needs: [test, image, publisher-readiness]
+    if: needs.publisher-readiness.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ needs.publisher-readiness.outputs.role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Verify approved ECR registry
+        env:
+          APPROVED_ACCOUNT_ID: ${{ needs.publisher-readiness.outputs.account_id }}
+          ACTUAL_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          expected_registry="${APPROVED_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          if [ "$ACTUAL_REGISTRY" != "$expected_registry" ]; then
+            echo "::error::ECR registry does not match the approved publisher account and region."
+            exit 1
+          fi
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,53 @@
+from midkernel_runner.config import ConfigError, load_config
+import pytest
+
+
+def _base(**overrides):
+    env = {
+        "RUN_ID": "run_abc-1",
+        "GITHUB_OWNER": "midkernel",
+        "GITHUB_NAME": "playbooks",
+    }
+    env.update(overrides)
+    return env
+
+
+def test_defaults():
+    cfg = load_config(_base())
+    assert cfg.playbook_slug == "security-review"
+    assert cfg.scan_profile == "balanced"
+    assert cfg.artifacts_bucket == "midkernel-dev-artifacts"
+    assert cfg.artifact_key == "runs/run_abc-1/report.md"
+    assert cfg.s3_uri == "s3://midkernel-dev-artifacts/runs/run_abc-1/report.md"
+    assert cfg.openrouter_model == "openrouter/moonshotai/kimi-k3"
+    assert cfg.openrouter_variant == "medium"
+    assert cfg.openrouter_secret_id == "midkernel/dev/harness/openrouter-api-key"
+    assert cfg.github_secret_id == "midkernel/dev/harness/github-token"
+
+
+def test_profile_variant_and_low_timeout():
+    cfg = load_config(_base(SCAN_PROFILE="low", THREAT_PIN="reentrancy"))
+    assert cfg.scan_profile == "low"
+    assert cfg.openrouter_variant == "low"
+    assert cfg.timeout_seconds == 15 * 60
+    assert cfg.threat_pin == "reentrancy"
+
+
+def test_max_default_variant():
+    cfg = load_config(_base(SCAN_PROFILE="max"))
+    assert cfg.openrouter_variant == "max"
+
+
+def test_missing_run_id():
+    with pytest.raises(ConfigError, match="RUN_ID"):
+        load_config({"GITHUB_OWNER": "a", "GITHUB_NAME": "b"})
+
+
+def test_bad_profile():
+    with pytest.raises(ConfigError, match="SCAN_PROFILE"):
+        load_config(_base(SCAN_PROFILE="turbo"))
+
+
+def test_prefix_without_slash():
+    cfg = load_config(_base(ARTIFACTS_PREFIX="runs"))
+    assert cfg.artifact_key == "runs/run_abc-1/report.md"
