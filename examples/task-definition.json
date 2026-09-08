@@ -1,0 +1,36 @@
+{
+  "family": "midkernel-dev-scan",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::489470371031:role/midkernel-dev-ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::489470371031:role/midkernel-dev-ecsTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "agent",
+      "image": "489470371031.dkr.ecr.us-east-1.amazonaws.com/midkernel-agentflow-agents:latest",
+      "essential": true,
+      "environment": [
+        { "name": "RUN_ID", "value": "REPLACE_RUN_ID" },
+        { "name": "GITHUB_OWNER", "value": "REPLACE_OWNER" },
+        { "name": "GITHUB_NAME", "value": "REPLACE_REPO" },
+        { "name": "PLAYBOOK_SLUG", "value": "security-review" },
+        { "name": "SCAN_PROFILE", "value": "low" },
+        { "name": "ARTIFACTS_BUCKET", "value": "midkernel-dev-artifacts" },
+        { "name": "ARTIFACTS_PREFIX", "value": "runs/" },
+        { "name": "OPENROUTER_MODEL", "value": "openrouter/moonshotai/kimi-k3" },
+        { "name": "OPENROUTER_VARIANT", "value": "max" },
+        { "name": "AWS_REGION", "value": "us-east-1" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/agentflow",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "scan"
+        }
+      }
+    }
+  ]
+}

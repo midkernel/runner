@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+dist/
+*.egg-info/
+.DS_Store
+.env
+auth.json
+/outputs/
+/workspace-clone/

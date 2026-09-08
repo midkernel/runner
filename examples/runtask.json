@@ -1,0 +1,33 @@
+{
+  "cluster": "midkernel-dev",
+  "taskDefinition": "midkernel-dev-scan",
+  "count": 1,
+  "enableECSManagedTags": true,
+  "propagateTags": "TASK_DEFINITION",
+  "capacityProviderStrategy": [
+    { "capacityProvider": "FARGATE_SPOT", "weight": 4, "base": 0 },
+    { "capacityProvider": "FARGATE", "weight": 1, "base": 0 }
+  ],
+  "networkConfiguration": {
+    "awsvpcConfiguration": {
+      "subnets": ["REPLACE_PUBLIC_SUBNET_A", "REPLACE_PUBLIC_SUBNET_B"],
+      "securityGroups": ["REPLACE_ECS_TASKS_SG"],
+      "assignPublicIp": "ENABLED"
+    }
+  },
+  "overrides": {
+    "containerOverrides": [
+      {
+        "name": "agent",
+        "environment": [
+          { "name": "RUN_ID", "value": "REPLACE_RUN_ID" },
+          { "name": "GITHUB_OWNER", "value": "REPLACE_OWNER" },
+          { "name": "GITHUB_NAME", "value": "REPLACE_REPO" },
+          { "name": "PLAYBOOK_SLUG", "value": "security-review" },
+          { "name": "SCAN_PROFILE", "value": "low" },
+          { "name": "GITHUB_TOKEN", "value": "optional-per-run-installation-token" }
+        ]
+      }
+    ]
+  }
+}
