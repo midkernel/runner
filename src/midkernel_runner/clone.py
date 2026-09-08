@@ -29,9 +29,11 @@ def clone_repository(
     run: callable = subprocess.run,
 ) -> Path:
     dest = Path(config.repo_dir)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists():
-        raise CloneError(f"Clone destination already exists: {dest}")
+    dest.mkdir(parents=True, exist_ok=True)
+    if (dest / ".git").exists():
+        return dest
+    if any(dest.iterdir()):
+        raise CloneError(f"Clone destination is not empty: {dest}")
 
     url = clone_url_with_token(config.github_clone_url, secrets.github_token)
     cmd = ["git", "clone", "--depth", "1"]

@@ -1,154 +1,145 @@
 # midkernel/runner
 
-Public Docker image that **ECS Fargate Spot** runs for a Midkernel Scan one-shot.
+ECR image that **agentenv/agentflow** launches as each ECS Fargate **node/agent**.
 
-ECR:
+```text
+489470371031.dkr.ecr.us-east-1.amazonaws.com/midkernel-agentflow-agents
+```
 
-`489470371031.dkr.ecr.us-east-1.amazonaws.com/midkernel-agentflow-agents`
+This repo owns the **agent container**. Midkernel app / playbooks are the control plane. Infra already exists in `midkernel/infra` — do not recreate it here.
 
-This repo owns the **agent container**. The Midkernel app (upcoming ECS executor) is the control plane: `RunTask` + `PassRole` via `midkernel-dev-agentflow-control-plane`. Infra already exists in `midkernel/infra` — do not recreate it here.
+## What this image is
 
-## What runs inside the task
+A valid [agentenv/agentflow](https://github.com/agentenv/agentflow) ECS node image: `bash`, `kimi`, and `agentflow` on `PATH`, plus `/workspace` and `/outputs`.
 
-1. Read run context from environment (`RUN_ID`, repo, playbook, profile).
-2. Load harness secrets with the **ECS task role** (`GetSecretValue`):
-   - `midkernel/dev/harness/openrouter-api-key`
-   - `midkernel/dev/harness/github-token`
-3. Clone `github.com/$GITHUB_OWNER/$GITHUB_NAME` with that GitHub token.
-4. Fetch the playbook prompt from public [`midkernel/playbooks`](https://github.com/midkernel/playbooks) (`<slug>.md`, default `security-review`).
-5. Run **OpenCode** (`opencode run`) against the clone, OpenRouter only, default model **Kimi K3 Max** (`openrouter/moonshotai/kimi-k3` + `--variant max` on the `max` profile).
-6. Require a real **`/outputs/report.md`**. Upload to  
-   `s3://midkernel-dev-artifacts/runs/<RUN_ID>/report.md`.  
-   If the report is missing, empty, or a stub, the container **exits non-zero** and uploads nothing.
+agentflow's ECS runner **overrides** the image entrypoint with:
 
-Stdout is the CloudWatch stream (log group `/agentflow`).
+```text
+entryPoint: ["bash", "-c"]
+command:    ["<auth_setup> && kimi --print --output-format stream-json --yolo -p …"]
+```
 
-## Why OpenCode one-shot (and still agentflow)
+(`agentflow/runners/ecs.py` at pin `09df0175`).
 
-James asked for real [agentenv/agentflow](https://github.com/agentenv/agentflow) on real ECS Fargate Spot, OpenCode harness, OpenRouter only — no stubs, no AI Gateway shortcut.
+Hard lock is **OpenRouter**. Preferred harness is **Kimi CLI 1.49.0** (same pin as agentflow's bundled Dockerfile), wired to OpenRouter. OpenCode was only an example and is **not** installed — it is optional/unnecessary and is not prioritized. For `openai_legacy` providers, kimi-cli reads `OPENAI_API_KEY`. The node writes `~/.kimi/config.toml` and exports:
 
-**Scan `security-review` is a single-skill one-shot** (playbook frontmatter: `kind: single-skill`; body is “Perform a /security-review on this project”). It is not a multi-node graph.
+| Variable | Purpose |
+| --- | --- |
+| `OPENAI_API_KEY` / `OPENAI_BASE_URL` | kimi-cli OpenRouter (`openai_legacy`) |
+| `OPENROUTER_API_KEY` | Midkernel / app contract |
+| `KIMI_API_KEY` / `MOONSHOT_API_KEY` | agentflow `agent_auth_setup` for `kimi` |
 
-agentflow’s `kind: "ecs"` runner is a **control plane**: it `RegisterTaskDefinition` + `RunTask` and streams `/agentflow/{node.id}`. Midkernel already has that role on the app side, plus explicit cluster/subnets/SG (infra forbids agentflow zero-config). Running agentflow *inside* this task to launch **nested** Fargate tasks would double Spot cost and ignore that contract.
+Default model: `moonshotai/kimi-k3` (app `SCAN_MODEL_BY_PROFILE`). Config aliases also accept `kimi-k3` and `openrouter/moonshotai/kimi-k3` so agentflow `--model` resolves.
 
-agentflow’s adapters are Codex / Claude / Kimi CLI / Pi — **there is no OpenCode adapter**. Midkernel’s lock is OpenCode + OpenRouter.
+Fargate tasks are unprivileged. This image does **not** copy agentflow's DinD Dockerfile.
 
-So this image:
+## `target.image` (app + playbooks)
 
-- **Does** real agent execution: OpenCode talks to OpenRouter (Kimi K3), reviews the cloned repo, writes `report.md`.
-- **Installs** `agentflow` on `PATH` so the same ECR repo is a valid `target.image` for later multi-node playbooks (see `pipelines/security-review.py`).
-- **Does not** copy agentflow’s DinD Dockerfile (privileged Docker). Fargate Spot tasks here are unprivileged; the task SG has no Docker socket.
+Use this ECR repo as `target.image` on every Midkernel `kind: "ecs"` node. Do **not** use agentflow zero-config (`{"kind":"ecs","region":"us-east-1"}`).
 
-The app’s current v0 executor uses Vercel AI Gateway. **This image does not.** It never reads `AI_GATEWAY_API_KEY` / `VERCEL_OIDC_TOKEN`.
+```python
+from agentflow import Graph, kimi
+
+IMAGE = "489470371031.dkr.ecr.us-east-1.amazonaws.com/midkernel-agentflow-agents:latest"
+
+with Graph("midkernel-security-review", working_dir=".") as g:
+    kimi(
+        task_id="security-review",
+        prompt="Perform a /security-review on this project. Write /outputs/report.md.",
+        model="moonshotai/kimi-k3",
+        target={
+            "kind": "ecs",
+            "region": "us-east-1",
+            "cluster": "midkernel-dev",
+            "image": IMAGE,
+            "assign_public_ip": True,
+            "subnets": ["…infra public_subnet_ids…"],
+            "security_groups": ["…infra ecs_security_group_id…"],
+        },
+    )
+```
+
+See `pipelines/security-review.py`. Pin `:latest` or `:<sha>` from CI.
+
+Stock agentflow ECS does not set `taskRoleArn`. Midkernel app must `RegisterTaskDefinition` with:
+
+- `executionRoleArn`: `midkernel-dev-ecsTaskExecutionRole`
+- `taskRoleArn`: `midkernel-dev-ecsTaskRole` (S3 + `GetSecretValue`)
+
+## Artifact contract
+
+Nodes write **`report.md`** (prefer `/outputs/report.md`). When `RUN_ID` is set, the node uploads to:
+
+```text
+s3://midkernel-dev-artifacts/runs/<RUN_ID>/report.md
+```
+
+via the task role (`s3:PutObject`, SSE-S3). Helpers:
+
+- `midkernel-publish-report` — find + validate + upload
+- `kimi` PATH wrapper — prepare OpenRouter, run real kimi, then publish if `RUN_ID` is set
+- `BASH_ENV=/opt/midkernel/node-env.sh` — same prepare when agentflow uses `bash -c`
+
+Missing, empty, or stub reports are **not** uploaded; the process exits non-zero.
+
+## Secrets
+
+Task role `GetSecretValue` (already on `midkernel-dev-ecsTaskRole`):
+
+- `midkernel/dev/harness/openrouter-api-key`
+- `midkernel/dev/harness/github-token`
+
+Formats: raw string or JSON (`apiKey` / `token` / …). See `src/midkernel_runner/secrets.py`.
+
+Per-run `GITHUB_TOKEN` from the app (installation token) wins over the static SM PAT.
+
+`MIDKERNEL_LOCAL=1` uses `OPENROUTER_API_KEY` + `GITHUB_TOKEN` from the environment (laptop only).
+
+The image never reads `AI_GATEWAY_API_KEY` / `VERCEL_OIDC_TOKEN`.
 
 ## Environment contract
 
-The app’s ECS executor should pass these on the container (or task override). Coordinate names with `midkernel/app`.
+Aligned with `midkernel/app` `src/lib/agentflow-contract.ts`. App names and runner names are both accepted.
 
-| Variable | Required | Default | Notes |
+| Variable | Required for Scan | App alias | Notes |
 | --- | --- | --- | --- |
-| `RUN_ID` | yes | — | Artifact key segment. `[A-Za-z0-9._:-]{1,128}` |
-| `GITHUB_OWNER` | yes | — | Target repo owner |
-| `GITHUB_NAME` | yes | — | Target repo name |
-| `PLAYBOOK_SLUG` | no | `security-review` | Fetched as `midkernel/playbooks/<slug>.md` |
-| `SCAN_PROFILE` | no | `balanced` | `low` \| `balanced` \| `max` |
-| `THREAT_PIN` | no | — | Optional pin, max 80 chars. Not a fourth profile |
-| `GITHUB_REF` | no | default branch | Shallow clone `--branch` |
-| `GITHUB_TOKEN` | no | from SM | Per-run **installation token** from the app wins over the static SM secret |
-| `ARTIFACTS_BUCKET` | no | `midkernel-dev-artifacts` | |
-| `ARTIFACTS_PREFIX` | no | `runs/` | Final key `runs/<RUN_ID>/report.md` |
-| `OPENROUTER_MODEL` | no | `openrouter/moonshotai/kimi-k3` | OpenCode `provider/model` |
-| `OPENROUTER_VARIANT` | no | profile map | `low`→`low`, `balanced`→`medium`, `max`→`max` (Kimi K3 Max effort) |
-| `AWS_REGION` | no | `us-east-1` | |
-| `OPENROUTER_SECRET_ID` | no | `midkernel/dev/harness/openrouter-api-key` | |
-| `GITHUB_TOKEN_SECRET_ID` | no | `midkernel/dev/harness/github-token` | |
-| `AGENT_TIMEOUT_SECONDS` | no | 15m / 30m / 60m | By profile |
-| `MIDKERNEL_LOCAL` | no | — | `1` = use `OPENROUTER_API_KEY` + `GITHUB_TOKEN` from env (laptop only) |
+| `RUN_ID` | yes (artifacts) | — | `[A-Za-z0-9._:-]{1,128}` |
+| `GITHUB_OWNER` | yes (clone) | — | |
+| `GITHUB_NAME` | yes (clone) | — | |
+| `PLAYBOOK_SLUG` | no | `PLAYBOOK` | default `security-review` |
+| `SCAN_PROFILE` | no | `PROFILE` | `low` \| `balanced` \| `max` |
+| `THREAT_PIN` | no | `THREAT` | max 80 chars |
+| `GITHUB_REF` | no | — | shallow clone `--branch` |
+| `GITHUB_TOKEN` | no | — | per-run installation token |
+| `ARTIFACTS_BUCKET` | no | — | default `midkernel-dev-artifacts` |
+| `ARTIFACTS_PREFIX` | no | — | default `runs/` |
+| `ARTIFACTS_KEY` | no | — | exact S3 key if the app sets it |
+| `OPENROUTER_MODEL` | no | `MODEL` | default `moonshotai/kimi-k3` |
+| `AWS_REGION` | no | — | default `us-east-1` |
+| `OPENROUTER_SECRET_ID` | no | — | `midkernel/dev/harness/openrouter-api-key` |
+| `GITHUB_TOKEN_SECRET_ID` | no | — | `midkernel/dev/harness/github-token` |
 
-### Secret formats
+A **generic** agentflow node (no `RUN_ID`) still runs `kimi` with OpenRouter if a key is already in the environment.
 
-Secrets Manager `SecretString` (AWSCURRENT), never in git / never in the image.
+## Suggested ECS task definition
 
-**openrouter-api-key**
+`examples/task-definition.json` / `examples/runtask.json`. Family `midkernel-dev-scan` or app-registered `midkernel-agentflow-agents`. Logs: `/agentflow`. Capacity: Fargate Spot preferred.
 
-- Raw key (`sk-or-v1-...`), or
-- JSON: `apiKey` / `api_key` / `OPENROUTER_API_KEY` / `key`
+| Profile | cpu | memory |
+| --- | --- | --- |
+| `low` | `1024` | `2048` |
+| `balanced` | `2048` | `4096` |
+| `max` | `4096` | `8192` |
 
-**github-token**
-
-- Raw PAT or GitHub App **installation** token (`ghp_`, `ghs_`, `github_pat_`, …), or
-- JSON: `token` / `github_token` / `GITHUB_TOKEN` / `installationToken`
-
-Clone URL: `https://x-access-token:<token>@github.com/<owner>/<name>.git`.
-
-## Suggested ECS task definition (Eng / IT)
-
-No infra PR from this repo. Register (or have the app `RegisterTaskDefinition` per run) against **existing** roles, cluster, public subnets, and `/agentflow`.
-
-See `examples/task-definition.json` and `examples/runtask.json`.
-
-| Profile | cpu | memory | capacity |
-| --- | --- | --- | --- |
-| `low` | `1024` (1 vCPU) | `2048` | Fargate Spot preferred |
-| `balanced` | `2048` | `4096` | same |
-| `max` | `4096` | `8192` | same |
-
-```text
-family:              midkernel-dev-scan
-networkMode:         awsvpc
-compatibilities:     FARGATE
-executionRoleArn:    arn:aws:iam::489470371031:role/midkernel-dev-ecsTaskExecutionRole
-taskRoleArn:         arn:aws:iam::489470371031:role/midkernel-dev-ecsTaskRole
-container name:      agent
-image:               489470371031.dkr.ecr.us-east-1.amazonaws.com/midkernel-agentflow-agents:<sha|latest>
-awslogs-group:       /agentflow
-awslogs-stream-prefix: scan
-assignPublicIp:      ENABLED
-cluster:             midkernel-dev
-capacityProvider:    FARGATE_SPOT weight 4, FARGATE weight 1
-```
-
-Fill `subnets` / `securityGroups` from infra outputs (`public_subnet_ids`, `ecs_security_group_id`). Do **not** use agentflow zero-config (`{"kind":"ecs","region":"us-east-1"}`).
-
-App RunTask should override `RUN_ID`, `GITHUB_OWNER`, `GITHUB_NAME`, `PLAYBOOK_SLUG`, `SCAN_PROFILE`, optional `THREAT_PIN` / `GITHUB_REF` / `GITHUB_TOKEN`.
+When the app RunTasks **without** a command override and `RUN_ID` is set, `CMD midkernel-default` runs the Kimi scan helper (clone playbook repo → kimi → upload). Native agentflow overrides that with `bash -c` + `kimi`.
 
 ## CI / publish
 
-`.github/workflows/ci.yml`:
+`.github/workflows/ci.yml` is unchanged: PR/push unit tests + `docker build`; `main` / `workflow_dispatch` OIDC push `:<sha>` and `:latest` to ECR.
 
-- PR / push: unit tests + `docker build` (no AWS) + print non-secret GitHub OIDC claims (`iss`, `aud`, `sub`, `repository`, `repository_owner`, `ref`, `workflow`, `job_workflow_ref` only; never the raw JWT).
-- `main` and `workflow_dispatch`: same claims debug, then OIDC assume `arn:aws:iam::489470371031:role/midkernel-github-actions` (`audience: sts.amazonaws.com`), push `:<sha>` and `:latest`.
+GitHub immutable OIDC `sub` for this repo (created 2026-09-04): `repo:midkernel@324066512/runner@1357082961:*`. Infra must trust that prefix. This repo does not change IAM.
 
-**Expected vs actual OIDC `sub` (this repo, created 2026-09-04):**
-
-| | `sub` |
-| --- | --- |
-| What Infra#4 Terraform trusts today (`StringLike`) | `repo:midkernel/runner:*` → e.g. `repo:midkernel/runner:ref:refs/heads/main` |
-| What GitHub actually issues (immutable default for new repos) | `repo:midkernel@324066512/runner@1357082961:ref:refs/heads/main` |
-| Confirmed via `GET /repos/midkernel/runner/actions/oidc/customization/sub` | `use_default=true`, `sub_claim_prefix=repo:midkernel@324066512/runner@1357082961` |
-
-This is **not** an org `include_claim_keys` customization (`use_default` is true). It is GitHub’s [immutable subject](https://docs.github.com/en/actions/reference/openid-connect-reference#immutable-subject-claims) format for repositories created after 2026-07-15. `repo:midkernel/runner:*` cannot match `repo:midkernel@…`.
-
-**IT (James lock: IaC only — `midkernel/infra`, no console IAM):** update `module.oidc_github_actions` `allowed_sub_patterns` (keep `StringLike` + `aud=sts.amazonaws.com`) to the immutable prefixes. Same org/repos created 2026-09-04:
-
-```hcl
-allowed_sub_patterns = [
-  "repo:midkernel@324066512/infra@1357082965:*",
-  "repo:midkernel@324066512/app@1357082937:*",
-  "repo:midkernel@324066512/runner@1357082961:*",
-]
-```
-
-Files: `environments/dev/main.tf` and the default in `modules/oidc_github_actions/variables.tf`. Do not drop `sts.amazonaws.com` from the provider `client_id_list`. This repo does not change IAM.
-
-Manual push (after `aws ecr get-login-password`):
-
-```bash
-docker build -t 489470371031.dkr.ecr.us-east-1.amazonaws.com/midkernel-agentflow-agents:dev .
-docker push 489470371031.dkr.ecr.us-east-1.amazonaws.com/midkernel-agentflow-agents:dev
-```
-
-## Local (no AWS)
+## Local
 
 ```bash
 pip install -e ".[dev]"
@@ -157,25 +148,17 @@ pytest -q
 
 ```bash
 docker build -t midkernel-agentflow-agents:local .
-docker run --rm \
-  -e MIDKERNEL_LOCAL=1 \
-  -e RUN_ID=local-1 \
-  -e GITHUB_OWNER=midkernel \
-  -e GITHUB_NAME=playbooks \
-  -e OPENROUTER_API_KEY \
-  -e GITHUB_TOKEN \
-  midkernel-agentflow-agents:local
+docker run --rm midkernel-agentflow-agents:local agentflow --help
+docker run --rm midkernel-agentflow-agents:local kimi --help
 ```
-
-Local mode still requires a real OpenCode/OpenRouter pass to write `report.md`. S3 upload will fail without a task role — that is a failed run, not a stub upload.
 
 ## Layout
 
 ```
-src/midkernel_runner/   # env, SM, clone, OpenCode, report, S3
-scripts/entrypoint.sh
-pipelines/              # documented agentflow graph; not the Scan CMD
-examples/               # task def + RunTask shapes for the app
+src/midkernel_runner/   # node prepare, Kimi/OpenRouter, report, S3
+scripts/                # agentflow entrypoint, BASH_ENV, kimi wrapper
+pipelines/              # target.image graph for app/playbooks
+examples/               # task def + RunTask shapes
 Dockerfile
 ```
 
