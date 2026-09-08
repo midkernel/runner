@@ -19,9 +19,9 @@ entryPoint: ["bash", "-c"]
 command:    ["<auth_setup> && kimi --print --output-format stream-json --yolo -p …"]
 ```
 
-(`agentflow/runners/ecs.py` at pin `09df0175`). Midkernel therefore does **not** use an OpenCode one-shot as the E2E path. OpenCode is deferred (not installed).
+(`agentflow/runners/ecs.py` at pin `09df0175`).
 
-Harness: **Kimi CLI 1.49.0** (same pin as agentflow's bundled Dockerfile) over **OpenRouter only**. For `openai_legacy` providers, kimi-cli reads `OPENAI_API_KEY`. The node writes `~/.kimi/config.toml` and exports:
+Hard lock is **OpenRouter**. Preferred harness is **Kimi CLI 1.49.0** (same pin as agentflow's bundled Dockerfile), wired to OpenRouter. OpenCode was only an example and is **not** installed — it is optional/unnecessary and is not prioritized. For `openai_legacy` providers, kimi-cli reads `OPENAI_API_KEY`. The node writes `~/.kimi/config.toml` and exports:
 
 | Variable | Purpose |
 | --- | --- |

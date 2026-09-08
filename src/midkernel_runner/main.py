@@ -1,9 +1,9 @@
 """Midkernel scan helper: secrets → clone → Kimi → report.md → S3.
 
-The default image CMD is ``agentflow --help`` (valid agentflow ECS node).
-This helper runs when the app RunTasks the image with Midkernel scan env
-and no command override. Native agentflow launches ``kimi`` via ``bash -c``;
-``BASH_ENV`` + the ``kimi`` wrapper still prepare OpenRouter and publish.
+The default image CMD is ``midkernel-default`` (Kimi scan helper when
+``RUN_ID`` is set, otherwise ``agentflow --help``). Native agentflow
+launches ``kimi`` via ``bash -c``; ``BASH_ENV`` + the ``kimi`` wrapper
+still prepare OpenRouter and publish.
 """
 
 from __future__ import annotations

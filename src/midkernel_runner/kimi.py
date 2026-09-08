@@ -192,7 +192,7 @@ def run_kimi(
     if which(binary) is None and binary == "kimi":
         raise KimiError(
             "kimi is not on PATH. The image must install kimi-cli "
-            "(agentflow's Kimi harness). OpenCode is deferred."
+            "(agentflow's Kimi harness, OpenRouter)."
         )
 
     home = Path(os.environ.get("HOME") or "/home/agent")

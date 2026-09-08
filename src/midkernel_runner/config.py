@@ -19,7 +19,6 @@ DEFAULT_PLAYBOOKS_REF = "main"
 # OpenRouter vendor/model slug (app + playbooks). Kimi CLI config aliases also
 # accept openrouter/<slug> when agentflow passes that as --model.
 DEFAULT_OPENROUTER_MODEL = "moonshotai/kimi-k3"
-DEFAULT_OPENROUTER_VARIANT = "max"
 
 DEFAULT_OPENROUTER_SECRET = "midkernel/dev/harness/openrouter-api-key"
 DEFAULT_GITHUB_SECRET = "midkernel/dev/harness/github-token"
@@ -28,12 +27,6 @@ RUN_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
-
-PROFILE_VARIANT = {
-    "low": "low",
-    "balanced": "medium",
-    "max": "max",
-}
 
 PROFILE_TIMEOUT_SECONDS = {
     "low": 15 * 60,
@@ -66,7 +59,6 @@ class RunConfig:
     artifacts_bucket: str
     artifacts_prefix: str
     openrouter_model: str
-    openrouter_variant: str
     aws_region: str
     openrouter_secret_id: str
     github_secret_id: str
@@ -174,7 +166,6 @@ def load_config(environ: dict[str, str] | None = None) -> RunConfig:
     if "/" not in model:
         raise ConfigError("OPENROUTER_MODEL must be vendor/model (e.g. moonshotai/kimi-k3)")
 
-    variant = _optional("OPENROUTER_VARIANT", env) or PROFILE_VARIANT[profile]
     timeout = int(_optional("AGENT_TIMEOUT_SECONDS", env, str(PROFILE_TIMEOUT_SECONDS[profile])) or PROFILE_TIMEOUT_SECONDS[profile])
 
     return RunConfig(
@@ -187,7 +178,6 @@ def load_config(environ: dict[str, str] | None = None) -> RunConfig:
         artifacts_bucket=_optional("ARTIFACTS_BUCKET", env, DEFAULT_BUCKET) or DEFAULT_BUCKET,
         artifacts_prefix=prefix,
         openrouter_model=model,
-        openrouter_variant=variant,
         aws_region=_optional("AWS_REGION", env, DEFAULT_REGION) or DEFAULT_REGION,
         openrouter_secret_id=_optional("OPENROUTER_SECRET_ID", env, DEFAULT_OPENROUTER_SECRET)
         or DEFAULT_OPENROUTER_SECRET,
