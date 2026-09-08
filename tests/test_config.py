@@ -20,22 +20,20 @@ def test_defaults():
     assert cfg.artifact_key == "runs/run_abc-1/report.md"
     assert cfg.s3_uri == "s3://midkernel-dev-artifacts/runs/run_abc-1/report.md"
     assert cfg.openrouter_model == "moonshotai/kimi-k3"
-    assert cfg.openrouter_variant == "medium"
     assert cfg.openrouter_secret_id == "midkernel/dev/harness/openrouter-api-key"
     assert cfg.github_secret_id == "midkernel/dev/harness/github-token"
 
 
-def test_profile_variant_and_low_timeout():
+def test_profile_timeout_and_threat():
     cfg = load_config(_base(SCAN_PROFILE="low", THREAT_PIN="reentrancy"))
     assert cfg.scan_profile == "low"
-    assert cfg.openrouter_variant == "low"
     assert cfg.timeout_seconds == 15 * 60
     assert cfg.threat_pin == "reentrancy"
 
 
-def test_max_default_variant():
+def test_max_timeout():
     cfg = load_config(_base(SCAN_PROFILE="max"))
-    assert cfg.openrouter_variant == "max"
+    assert cfg.timeout_seconds == 60 * 60
 
 
 def test_missing_run_id():
