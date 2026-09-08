@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "midkernel-runner"
+version = "0.1.0"
+description = "ECS Fargate agent image for Midkernel Scan one-shots (OpenCode + OpenRouter)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Midkernel" }]
+dependencies = [
+  "boto3>=1.35.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4.0",
+]
+
+[project.scripts]
+midkernel-runner = "midkernel_runner.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/midkernel_runner"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
