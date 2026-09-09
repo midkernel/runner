@@ -20,10 +20,28 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from midkernel_runner.config import RunConfig
+from midkernel_runner.mode import IMAGE_KIMI_BIN
 
 LOG = logging.getLogger("midkernel.graph")
 USER_AGENT = "midkernel-runner"
-IMAGE_KIMI_BIN = "/opt/midkernel/kimi.bin"
+
+GRAPH_KIMI_SHIM = """#!/bin/sh
+# In-task graph PATH shim. agentflow / playbooks may still exec `kimi`.
+# Never fall through to /usr/local/bin/kimi (report-enforcing wrapper).
+BIN="${{MIDKERNEL_KIMI_BIN:-{kimi_bin}}}"
+exec "$BIN" "$@"
+"""
+
+# agentflow doctor kimi_ready: `[executable, "--version"]` in the prepared
+# local shell. Playbooks sets executable to pipelines/_node_io.py, which
+# (until playbooks handles it) fell through to wrap_kimi and failed ×12.
+NODE_IO_VERSION_MARKER = 'argv[0] in {"--version"'
+NODE_IO_VERSION_SNIPPET = '''    if argv and argv[0] in {"--version", "-V", "-h", "--help"}:
+        binary = real_kimi_bin()
+        os.execvp(binary, [binary, *argv])
+
+'''
+NODE_IO_ARGV_LINE = "    argv = list(sys.argv[1:] if argv is None else argv)\n"
 
 
 class GraphError(RuntimeError):
@@ -92,18 +110,46 @@ def should_run_playbooks_graph(config: RunConfig, *, fetch_status=None) -> bool:
     return probe_pipeline(config, fetch_status=fetch_status) != "missing"
 
 
+def graph_kimi_shim_dir(config: RunConfig) -> Path:
+    return Path(config.workdir) / ".midkernel" / "bin"
+
+
+def install_graph_kimi_shim(config: RunConfig, kimi_bin: str) -> Path:
+    """Put a ``kimi`` shim ahead of the image wrapper on PATH."""
+    directory = graph_kimi_shim_dir(config)
+    directory.mkdir(parents=True, exist_ok=True)
+    shim = directory / "kimi"
+    shim.write_text(GRAPH_KIMI_SHIM.format(kimi_bin=kimi_bin), encoding="utf-8")
+    shim.chmod(0o755)
+    return shim
+
+
 def apply_graph_env(config: RunConfig, environ: dict[str, str] | None = None) -> dict[str, str]:
-    """Export the playbooks node-I/O contract onto the process env."""
+    """Export the playbooks node-I/O contract onto the process env.
+
+    Intermediate graph nodes must not hit the PATH ``kimi`` wrapper
+    (requires ``report.md``) or BASH_ENV target clone (WORKDIR already
+    holds ``.midkernel/playbooks``).
+    """
     env = os.environ if environ is None else environ
     env["WORKDIR"] = config.workdir
     env["OUTPUTS_DIR"] = config.outputs_dir
     env["MIDKERNEL_NODE_IO"] = env.get("MIDKERNEL_NODE_IO") or "1"
     env["MIDKERNEL_AGENTFLOW_TARGET"] = env.get("MIDKERNEL_AGENTFLOW_TARGET") or "local"
-    if Path(IMAGE_KIMI_BIN).is_file() and not (env.get("MIDKERNEL_KIMI_BIN") or "").strip():
+    if not (env.get("MIDKERNEL_CLONE_TARGET") or "").strip():
+        env["MIDKERNEL_CLONE_TARGET"] = "0"
+    if not (env.get("MIDKERNEL_REQUIRE_REPORT") or "").strip():
+        env["MIDKERNEL_REQUIRE_REPORT"] = "0"
+    if not (env.get("MIDKERNEL_KIMI_BIN") or "").strip():
         env["MIDKERNEL_KIMI_BIN"] = IMAGE_KIMI_BIN
     Path(config.workdir).mkdir(parents=True, exist_ok=True)
     Path(config.outputs_dir).mkdir(parents=True, exist_ok=True)
     (Path(config.workdir) / ".midkernel").mkdir(parents=True, exist_ok=True)
+    shim = install_graph_kimi_shim(config, env["MIDKERNEL_KIMI_BIN"])
+    shim_dir = str(shim.parent)
+    current_path = env.get("PATH") or os.environ.get("PATH") or ""
+    parts = [part for part in current_path.split(os.pathsep) if part and part != shim_dir]
+    env["PATH"] = os.pathsep.join([shim_dir, *parts])
     return env
 
 
@@ -144,7 +190,34 @@ def clone_playbooks(
     pipeline = dest / "pipelines" / f"{config.playbook_slug}.py"
     if not pipeline.is_file():
         raise GraphError(f"cloned playbooks missing {pipeline}")
+    prepare_playbooks_kimi_executable(dest)
     return dest
+
+
+def node_io_path(root: Path) -> Path:
+    return Path(root) / "pipelines" / "_node_io.py"
+
+
+def prepare_playbooks_kimi_executable(root: Path) -> Path | None:
+    """Make playbooks ``_node_io.py`` pass agentflow ``kimi_ready``.
+
+    Doctor execs ``<executable> --version`` (not PATH ``kimi``). The helper
+    must be +x (direct exec) and must answer ``--version`` by exec'ing
+    ``MIDKERNEL_KIMI_BIN`` / ``kimi.bin`` — not wrap_kimi/start_node.
+    Idempotent if playbooks already has the probe.
+    """
+    path = node_io_path(root)
+    if not path.is_file():
+        return None
+    path.chmod(path.stat().st_mode | 0o111)
+    text = path.read_text(encoding="utf-8")
+    if NODE_IO_VERSION_MARKER not in text:
+        if NODE_IO_ARGV_LINE not in text:
+            LOG.warning("playbooks _node_io.py missing main() argv line; cannot insert --version probe")
+        else:
+            path.write_text(text.replace(NODE_IO_ARGV_LINE, NODE_IO_ARGV_LINE + NODE_IO_VERSION_SNIPPET, 1), encoding="utf-8")
+            LOG.info("patched playbooks _node_io.py to exec MIDKERNEL_KIMI_BIN on --version")
+    return path
 
 
 def run_playbooks_graph(
@@ -159,6 +232,7 @@ def run_playbooks_graph(
     if not agentflow:
         raise GraphError("agentflow is not on PATH")
     root = clone(config, playbooks_dir(config))
+    prepare_playbooks_kimi_executable(root)
     pipeline = root / "pipelines" / f"{config.playbook_slug}.py"
     in_task = root / "scripts" / "ecs-in-task.sh"
     if in_task.is_file() and os.access(in_task, os.X_OK):
