@@ -82,7 +82,7 @@ Dogfood `cmtu8jtu00003l1043oi0at41` only uploaded `report.md` because this image
 
 When no pipeline file exists, the node still writes **`report.md`** (prefer `/outputs/report.md`) via the single-kimi helper.
 
-via the task role (`s3:PutObject`, SSE-S3). Helpers:
+Uploaded via the task role (`s3:PutObject`, SSE-S3). Helpers:
 
 - `midkernel-publish-report` — find + validate + upload (md+kimi fallback)
 - `scripts/ecs-in-task.sh` on playbooks — `agentflow run pipelines/${PLAYBOOK}.py`
@@ -111,7 +111,7 @@ The image never reads `AI_GATEWAY_API_KEY` / `VERCEL_OIDC_TOKEN`.
 Aligned with `midkernel/app` `src/lib/agentflow-contract.ts`. App names and runner names are both accepted.
 
 | Variable | Required for Scan | App alias | Notes |
-| --- | --- |
+| --- | --- | --- | --- |
 | `RUN_ID` | yes (artifacts) | — | `[A-Za-z0-9._:-]{1,128}` |
 | `GITHUB_OWNER` | yes (clone) | — | |
 | `GITHUB_NAME` | yes (clone) | — | |
@@ -135,7 +135,7 @@ A **generic** agentflow node (no `RUN_ID`) still runs `kimi` with OpenRouter if 
 `examples/task-definition.json` / `examples/runtask.json`. Family `midkernel-dev-scan` or app-registered `midkernel-agentflow-agents`. Logs: `/agentflow`. Capacity: Fargate Spot preferred.
 
 | Profile | cpu | memory |
-| --- | --- |
+| --- | --- | --- |
 | `low` | `1024` | `2048` |
 | `balanced` | `2048` | `4096` |
 | `max` | `4096` | `8192` |
