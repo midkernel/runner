@@ -8,8 +8,9 @@ kimi-cli 1.49 ``openai_legacy`` does not send ``max_tokens``. OpenRouter then
 reserves the model max (131072). ``max_context_size`` (262144) must never be
 copied into ``max_tokens`` — half of that is also 131072.
 
-Default is **32768** (safe under the 68k floor). Hard ceiling **65536**.
-Treat ``>= 131072`` as the unsafe catalog default → 32768.
+Default is **32768** (safe under the 68k floor). Hard allowed max **65536**.
+Any value ``> 65536`` or ``>= 131072`` becomes **32768** — never
+``min(value, 65536)`` (that would turn 80000 into 65536).
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ MAX_SAFE_MAX_TOKENS = 65_536
 UNSAFE_OPENROUTER_DEFAULT = 131_072
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
+# First-wins order — lockstep with playbooks.
 MAX_TOKENS_ENV_KEYS = (
     "MIDKERNEL_OPENROUTER_MAX_TOKENS",
     "OPENROUTER_MAX_TOKENS",
@@ -52,12 +54,16 @@ class OpenRouterMaxTokensCapError(RuntimeError):
 
 
 def clamp_max_tokens(value: int) -> int:
-    """Return a wallet-safe completion cap. Never 131072 as a default."""
+    """Return a wallet-safe completion cap. Never 131072 as a default.
+
+    Allowed range is 1..65536. Values ``> 65536`` or ``>= 131072`` become
+    32768 — not ``min(value, 65536)``, which would turn 80000 into 65536.
+    """
     if value <= 0:
         return DEFAULT_MAX_TOKENS
-    if value >= UNSAFE_OPENROUTER_DEFAULT:
+    if value > MAX_SAFE_MAX_TOKENS or value >= UNSAFE_OPENROUTER_DEFAULT:
         return DEFAULT_MAX_TOKENS
-    return min(value, MAX_SAFE_MAX_TOKENS)
+    return value
 
 
 def parse_max_tokens(raw: str | None) -> int | None:
@@ -149,7 +155,7 @@ def sitecustomize_source() -> str:
         "# Midkernel: cap openai_legacy max_tokens. Do not treat max_context_size\n"
         "# as the completion budget (GOAL cmtufzqzo0003k004mt2w0m9c 402).\n"
         "# Fail loud if the OpenAILegacy cap does not install — a swallowed\n"
-        "# error would leave 131072 on the wire.\n"
+        "# error would leave 131072 on the wire. Also strip max_completion_tokens.\n"
         "from midkernel_runner.openrouter_tokens import install_openai_legacy_max_tokens_cap\n"
         "install_openai_legacy_max_tokens_cap(required=True)\n"
     )
@@ -202,18 +208,25 @@ def clamp_max_token_cli_flags(argv: list[str], max_tokens: int) -> list[str]:
 
 
 def apply_max_tokens_to_kwargs(kwargs: dict, cap: int) -> dict:
-    """Force a safe ``max_tokens`` onto outbound chat.completions kwargs."""
-    current = kwargs.get("max_tokens")
-    if current is None:
-        kwargs["max_tokens"] = cap
-        return kwargs
-    try:
-        numeric = int(current)
-    except (TypeError, ValueError):
-        kwargs["max_tokens"] = cap
-        return kwargs
-    if numeric <= 0 or numeric >= UNSAFE_OPENROUTER_DEFAULT or numeric > cap:
-        kwargs["max_tokens"] = cap
+    """Force outbound chat.completions to send a clamped ``max_tokens``.
+
+    Strip ``max_completion_tokens`` if present so it cannot reserve 131072.
+    ``max_tokens`` is always set to the clamped value.
+    """
+    raw = kwargs.get("max_tokens")
+    if raw is None:
+        raw = kwargs.get("max_completion_tokens")
+    kwargs.pop("max_completion_tokens", None)
+
+    safe = cap
+    if raw is not None:
+        try:
+            safe = clamp_max_tokens(int(raw))
+        except (TypeError, ValueError):
+            safe = cap
+    if safe > cap:
+        safe = cap
+    kwargs["max_tokens"] = safe
     return kwargs
 
 
@@ -286,11 +299,7 @@ def install_openai_legacy_max_tokens_cap(
     original_with = OpenAILegacy.with_generation_kwargs
 
     def wrapped_with(self, **kwargs):
-        if "max_tokens" in kwargs and kwargs["max_tokens"] is not None:
-            try:
-                kwargs["max_tokens"] = clamp_max_tokens(int(kwargs["max_tokens"]))
-            except (TypeError, ValueError):
-                kwargs["max_tokens"] = cap
+        apply_max_tokens_to_kwargs(kwargs, cap)
         updated = original_with(self, **kwargs)
         _ensure_generation_cap(updated, cap)
         _patch_completions_create(updated, cap)

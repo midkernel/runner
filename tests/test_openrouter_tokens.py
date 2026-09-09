@@ -7,8 +7,10 @@ import pytest
 from midkernel_runner.openrouter_tokens import (
     DEFAULT_MAX_TOKENS,
     MAX_SAFE_MAX_TOKENS,
+    MAX_TOKENS_ENV_KEYS,
     UNSAFE_OPENROUTER_DEFAULT,
     OpenRouterMaxTokensCapError,
+    apply_max_tokens_to_kwargs,
     clamp_max_token_cli_flags,
     clamp_max_tokens,
     install_openai_legacy_max_tokens_cap,
@@ -40,8 +42,65 @@ def test_env_131072_is_treated_as_unsafe_default():
     assert resolve_max_tokens({"KIMI_MAX_TOKENS": "131072"}) == DEFAULT_MAX_TOKENS
 
 
-def test_env_over_ceiling_clamps_to_65536():
-    assert resolve_max_tokens({"MIDKERNEL_OPENROUTER_MAX_TOKENS": "80000"}) == MAX_SAFE_MAX_TOKENS
+def test_over_ceiling_becomes_32768_not_min_65536():
+    """Playbooks lockstep: 80000 must not become 65536 via min(value, 65536)."""
+    assert clamp_max_tokens(80_000) == DEFAULT_MAX_TOKENS
+    assert clamp_max_tokens(80_000) != MAX_SAFE_MAX_TOKENS
+    assert clamp_max_tokens(65_537) == DEFAULT_MAX_TOKENS
+    assert resolve_max_tokens({"MIDKERNEL_OPENROUTER_MAX_TOKENS": "80000"}) == DEFAULT_MAX_TOKENS
+    assert resolve_max_tokens({"OPENROUTER_MAX_TOKENS": "80000"}) == DEFAULT_MAX_TOKENS
+
+
+def test_env_first_wins_order_matches_playbooks():
+    assert MAX_TOKENS_ENV_KEYS == (
+        "MIDKERNEL_OPENROUTER_MAX_TOKENS",
+        "OPENROUTER_MAX_TOKENS",
+        "KIMI_MAX_TOKENS",
+        "KIMI_MODEL_MAX_TOKENS",
+        "KIMI_MODEL_MAX_COMPLETION_TOKENS",
+    )
+    assert (
+        resolve_max_tokens(
+            {
+                "MIDKERNEL_OPENROUTER_MAX_TOKENS": "4096",
+                "OPENROUTER_MAX_TOKENS": "8192",
+                "KIMI_MAX_TOKENS": "16384",
+                "KIMI_MODEL_MAX_TOKENS": "2048",
+                "KIMI_MODEL_MAX_COMPLETION_TOKENS": "1024",
+            }
+        )
+        == 4096
+    )
+    assert (
+        resolve_max_tokens(
+            {
+                "OPENROUTER_MAX_TOKENS": "8192",
+                "KIMI_MAX_TOKENS": "16384",
+                "KIMI_MODEL_MAX_TOKENS": "2048",
+            }
+        )
+        == 8192
+    )
+    assert (
+        resolve_max_tokens(
+            {
+                "KIMI_MAX_TOKENS": "16384",
+                "KIMI_MODEL_MAX_TOKENS": "2048",
+                "KIMI_MODEL_MAX_COMPLETION_TOKENS": "1024",
+            }
+        )
+        == 16384
+    )
+    assert (
+        resolve_max_tokens(
+            {
+                "KIMI_MODEL_MAX_TOKENS": "2048",
+                "KIMI_MODEL_MAX_COMPLETION_TOKENS": "1024",
+            }
+        )
+        == 2048
+    )
+    assert resolve_max_tokens({"KIMI_MODEL_MAX_COMPLETION_TOKENS": "1024"}) == 1024
 
 
 def test_kimi_max_tokens_alias_is_accepted():
@@ -67,12 +126,23 @@ def test_cli_clamp_does_not_copy_context_size():
     assert "131072" not in out
 
 
+def test_cli_clamp_over_ceiling_becomes_32768_not_65536():
+    out = clamp_max_token_cli_flags(
+        ["--max-completion-tokens", "80000"],
+        DEFAULT_MAX_TOKENS,
+    )
+    assert out[out.index("--max-completion-tokens") + 1] == "32768"
+    assert "80000" not in out
+    assert "65536" not in out
+
+
 def test_sitecustomize_fails_loud_and_does_not_swallow_errors(tmp_path):
     text = sitecustomize_source()
     assert "max_context_size" in text
     assert "cmtufzqzo0003k004mt2w0m9c" in text
     assert "except Exception" not in text
     assert "required=True" in text
+    assert "max_completion_tokens" in text
     path = write_openrouter_sitecustomize(tmp_path)
     assert path.is_file()
     written = path.read_text(encoding="utf-8")
@@ -151,6 +221,46 @@ def test_monkeypatch_clamps_131072_on_outbound_kwargs():
     provider._generation_kwargs["max_tokens"] = UNSAFE_OPENROUTER_DEFAULT
     asyncio.run(provider.generate())
     assert calls[0]["max_tokens"] == DEFAULT_MAX_TOKENS
+
+
+def test_apply_kwargs_always_sets_max_tokens_and_strips_max_completion_tokens():
+    stripped = apply_max_tokens_to_kwargs(
+        {"max_completion_tokens": UNSAFE_OPENROUTER_DEFAULT},
+        DEFAULT_MAX_TOKENS,
+    )
+    assert stripped["max_tokens"] == DEFAULT_MAX_TOKENS
+    assert "max_completion_tokens" not in stripped
+
+    over_ceiling = apply_max_tokens_to_kwargs(
+        {"max_completion_tokens": 80_000},
+        DEFAULT_MAX_TOKENS,
+    )
+    assert over_ceiling["max_tokens"] == DEFAULT_MAX_TOKENS
+    assert "max_completion_tokens" not in over_ceiling
+
+    both = apply_max_tokens_to_kwargs(
+        {
+            "max_tokens": 4096,
+            "max_completion_tokens": UNSAFE_OPENROUTER_DEFAULT,
+        },
+        DEFAULT_MAX_TOKENS,
+    )
+    assert both["max_tokens"] == 4096
+    assert "max_completion_tokens" not in both
+
+    empty = apply_max_tokens_to_kwargs({}, DEFAULT_MAX_TOKENS)
+    assert empty["max_tokens"] == DEFAULT_MAX_TOKENS
+
+
+def test_monkeypatch_strips_max_completion_tokens_131072():
+    OpenAILegacy, calls = _install_fake_openai_legacy()
+    assert install_openai_legacy_max_tokens_cap({}) is True
+    provider = OpenAILegacy(model="moonshotai/kimi-k3")
+    provider._generation_kwargs.pop("max_tokens", None)
+    provider._generation_kwargs["max_completion_tokens"] = UNSAFE_OPENROUTER_DEFAULT
+    asyncio.run(provider.generate())
+    assert calls[0]["max_tokens"] == DEFAULT_MAX_TOKENS
+    assert "max_completion_tokens" not in calls[0]
 
 
 def test_injection_proxy_url_detection():
