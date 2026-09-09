@@ -57,6 +57,39 @@ def test_wrapper_requires_report_for_single_kimi(tmp_path):
     assert "ran-real" in result.stdout
 
 
+def test_wrapper_version_skips_prepare_and_publish(tmp_path):
+    real = tmp_path / "kimi.bin"
+    real.write_text("#!/bin/sh\necho kimi-cli-1.49.0\nexit 0\n", encoding="utf-8")
+    real.chmod(0o755)
+    prepare = tmp_path / "midkernel-node-prepare"
+    prepare.write_text("#!/bin/sh\necho PREPARE_CALLED >&2\nexit 1\n", encoding="utf-8")
+    prepare.chmod(0o755)
+    publish = tmp_path / "midkernel-publish-report"
+    publish.write_text("#!/bin/sh\necho PUBLISH_CALLED >&2\nexit 1\n", encoding="utf-8")
+    publish.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}",
+        "MIDKERNEL_KIMI_BIN": str(real),
+        "KIMI_REAL_BIN": str(real),
+        "RUN_ID": "cmtuavpvs0003ib04bfyr7roc",
+    }
+    env.pop("MIDKERNEL_NODE_READY", None)
+    env.pop("MIDKERNEL_AGENTFLOW_TARGET", None)
+    env.pop("MIDKERNEL_REQUIRE_REPORT", None)
+    result = subprocess.run(
+        ["sh", str(WRAPPER), "--version"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "kimi-cli-1.49.0" in result.stdout
+    assert "PREPARE_CALLED" not in result.stderr
+    assert "PUBLISH_CALLED" not in result.stderr
+
+
 def test_wrapper_prefers_midkernel_kimi_bin(tmp_path):
     other = tmp_path / "other.bin"
     other.write_text("#!/bin/sh\necho OTHER\nexit 0\n", encoding="utf-8")

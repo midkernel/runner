@@ -1,4 +1,5 @@
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ from midkernel_runner.config import load_config
 from midkernel_runner.graph import (
     GraphError,
     apply_graph_env,
+    prepare_playbooks_kimi_executable,
     pipeline_raw_url,
     run_playbooks_graph,
     should_run_playbooks_graph,
@@ -192,3 +194,59 @@ def test_run_playbooks_graph_requires_agentflow():
     cfg = _cfg()
     with pytest.raises(GraphError, match="agentflow"):
         run_playbooks_graph(cfg, which=lambda _name: None, clone=lambda _c, _d: Path("/x"))
+
+
+_NODE_IO_MAIN = '''#!/usr/bin/env python3
+import os
+import sys
+
+def real_kimi_bin():
+    return os.environ.get("MIDKERNEL_KIMI_BIN", "/opt/midkernel/kimi.bin")
+
+def wrap_kimi(argv):
+    raise SystemExit("wrap_kimi must not run for --version")
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in {"start", "finish", "init", "spawn-hunters"}:
+        return 0
+    return wrap_kimi(argv)
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+
+
+def test_prepare_playbooks_kimi_executable_answers_version(tmp_path):
+    """agentflow kimi_ready execs `_node_io.py --version` in a local shell."""
+    root = tmp_path / "playbooks"
+    (root / "pipelines").mkdir(parents=True)
+    helper = root / "pipelines" / "_node_io.py"
+    helper.write_text(_NODE_IO_MAIN, encoding="utf-8")
+    helper.chmod(0o644)
+    real = tmp_path / "kimi.bin"
+    real.write_text("#!/bin/sh\necho kimi-cli-1.49.0\nexit 0\n", encoding="utf-8")
+    real.chmod(0o755)
+
+    patched = prepare_playbooks_kimi_executable(root)
+    assert patched == helper
+    assert os.access(helper, os.X_OK)
+    assert 'argv[0] in {"--version"' in helper.read_text(encoding="utf-8")
+    # Idempotent.
+    prepare_playbooks_kimi_executable(root)
+    assert helper.read_text(encoding="utf-8").count("os.execvp") == 1
+
+    result = subprocess.run(
+        [str(helper), "--version"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "MIDKERNEL_KIMI_BIN": str(real)},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "kimi-cli-1.49.0" in result.stdout
+    assert "wrap_kimi must not run" not in result.stderr
+
+
+def test_prepare_playbooks_kimi_executable_missing_is_noop(tmp_path):
+    assert prepare_playbooks_kimi_executable(tmp_path / "empty") is None

@@ -32,6 +32,17 @@ BIN="${{MIDKERNEL_KIMI_BIN:-{kimi_bin}}}"
 exec "$BIN" "$@"
 """
 
+# agentflow doctor kimi_ready: `[executable, "--version"]` in the prepared
+# local shell. Playbooks sets executable to pipelines/_node_io.py, which
+# (until playbooks handles it) fell through to wrap_kimi and failed ×12.
+NODE_IO_VERSION_MARKER = 'argv[0] in {"--version"'
+NODE_IO_VERSION_SNIPPET = '''    if argv and argv[0] in {"--version", "-V", "-h", "--help"}:
+        binary = real_kimi_bin()
+        os.execvp(binary, [binary, *argv])
+
+'''
+NODE_IO_ARGV_LINE = "    argv = list(sys.argv[1:] if argv is None else argv)\n"
+
 
 class GraphError(RuntimeError):
     """Playbooks graph could not be executed."""
@@ -179,7 +190,34 @@ def clone_playbooks(
     pipeline = dest / "pipelines" / f"{config.playbook_slug}.py"
     if not pipeline.is_file():
         raise GraphError(f"cloned playbooks missing {pipeline}")
+    prepare_playbooks_kimi_executable(dest)
     return dest
+
+
+def node_io_path(root: Path) -> Path:
+    return Path(root) / "pipelines" / "_node_io.py"
+
+
+def prepare_playbooks_kimi_executable(root: Path) -> Path | None:
+    """Make playbooks ``_node_io.py`` pass agentflow ``kimi_ready``.
+
+    Doctor execs ``<executable> --version`` (not PATH ``kimi``). The helper
+    must be +x (direct exec) and must answer ``--version`` by exec'ing
+    ``MIDKERNEL_KIMI_BIN`` / ``kimi.bin`` — not wrap_kimi/start_node.
+    Idempotent if playbooks already has the probe.
+    """
+    path = node_io_path(root)
+    if not path.is_file():
+        return None
+    path.chmod(path.stat().st_mode | 0o111)
+    text = path.read_text(encoding="utf-8")
+    if NODE_IO_VERSION_MARKER not in text:
+        if NODE_IO_ARGV_LINE not in text:
+            LOG.warning("playbooks _node_io.py missing main() argv line; cannot insert --version probe")
+        else:
+            path.write_text(text.replace(NODE_IO_ARGV_LINE, NODE_IO_ARGV_LINE + NODE_IO_VERSION_SNIPPET, 1), encoding="utf-8")
+            LOG.info("patched playbooks _node_io.py to exec MIDKERNEL_KIMI_BIN on --version")
+    return path
 
 
 def run_playbooks_graph(
@@ -194,6 +232,7 @@ def run_playbooks_graph(
     if not agentflow:
         raise GraphError("agentflow is not on PATH")
     root = clone(config, playbooks_dir(config))
+    prepare_playbooks_kimi_executable(root)
     pipeline = root / "pipelines" / f"{config.playbook_slug}.py"
     in_task = root / "scripts" / "ecs-in-task.sh"
     if in_task.is_file() and os.access(in_task, os.X_OK):

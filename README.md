@@ -88,6 +88,7 @@ Uploaded via the task role (`s3:PutObject`, SSE-S3). Helpers:
 - `scripts/ecs-in-task.sh` on playbooks — `agentflow run pipelines/${PLAYBOOK}.py`
 - `kimi` PATH wrapper — prepare OpenRouter, run real kimi, then publish `report.md` only for single-kimi / per-node ECS (`RUN_ID` set and not `MIDKERNEL_AGENTFLOW_TARGET=local`)
 - In-task graphs: `apply_graph_env` exports `MIDKERNEL_KIMI_BIN=/opt/midkernel/kimi.bin`, `MIDKERNEL_CLONE_TARGET=0`, `MIDKERNEL_REQUIRE_REPORT=0`, and prepends `$WORKDIR/.midkernel/bin/kimi` so agentflow cannot resolve the report-enforcing wrapper for intermediate nodes
+- After cloning playbooks, runner `chmod +x` + `--version` short-circuit on `pipelines/_node_io.py` so agentflow `kimi_ready` (`<executable> --version` in the prepared local shell) execs `MIDKERNEL_KIMI_BIN` instead of wrap_kimi. PATH `kimi --version` also execs the real binary with no prepare/publish
 - `BASH_ENV=/opt/midkernel/node-env.sh` — same prepare when agentflow uses `bash -c`; graph mode skips target clone and the report EXIT trap (`prepare_node(clone_target=False)` still injects GITHUB_TOKEN + OpenRouter)
 
 Missing, empty, or stub reports are **not** uploaded; the process exits non-zero.

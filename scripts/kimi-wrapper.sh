@@ -39,6 +39,13 @@ if [ ! -x "$REAL" ]; then
   exit 127
 fi
 
+# agentflow kimi_ready / --help must not run prepare or require report.md.
+case "${1:-}" in
+  --version|-V|--help|-h)
+    exec "$REAL" "$@"
+    ;;
+esac
+
 if [ -z "${MIDKERNEL_NODE_READY:-}" ]; then
   if ! command -v midkernel-node-prepare >/dev/null 2>&1 || ! midkernel-node-prepare; then
     echo "midkernel: node prepare failed before kimi" >&2
