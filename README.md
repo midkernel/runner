@@ -87,7 +87,12 @@ Uploaded via the task role (`s3:PutObject`, SSE-S3). Helpers:
 - `midkernel-publish-report` — find + validate + upload (md+kimi fallback)
 - `scripts/ecs-in-task.sh` on playbooks — `agentflow run pipelines/${PLAYBOOK}.py`
 - `kimi` PATH wrapper — prepare OpenRouter, run real kimi, then publish `report.md` only for single-kimi / per-node ECS (`RUN_ID` set and not `MIDKERNEL_AGENTFLOW_TARGET=local`)
-- In-task graphs: `apply_graph_env` exports `MIDKERNEL_KIMI_BIN=/opt/midkernel/kimi.bin`, `MIDKERNEL_CLONE_TARGET=0`, `MIDKERNEL_REQUIRE_REPORT=0`, and prepends `$WORKDIR/.midkernel/bin/kimi` so agentflow cannot resolve the report-enforcing wrapper for intermediate nodes
+- In-task graphs: `apply_graph_env` exports `MIDKERNEL_CLONE_TARGET=0`, `MIDKERNEL_REQUIRE_REPORT=0`, prepends `$WORKDIR/.midkernel/bin/kimi`, and points **`MIDKERNEL_KIMI_BIN` at `$WORKDIR/.midkernel/bin/kimi-openrouter`** (playbooks `_node_io` execs that, not PATH). The front drops playbooks `--config` (only `models.midkernel`) and injects `--config-file $KIMI_SHARE_DIR/config.toml` with aliases for `midkernel` **and** the node's `--model` (review / threat-model `moonshotai/kimi-k3`, judge-b, hunters). Real binary is `MIDKERNEL_GRAPH_KIMI_BIN=/opt/midkernel/kimi.bin`. Also re-exports:
+  - `KIMI_SHARE_DIR=$WORKDIR/.midkernel/kimi` + OpenRouter `config.toml`
+  - `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENROUTER_API_KEY` (`openai_legacy`)
+  - `KIMI_API_KEY` / `KIMI_BASE_URL` / `KIMI_MODEL_NAME` (kimi-cli 1.49 dummy `type=kimi` fallback if `--config` still misses)
+
+**Playbooks coordination:** `_node_io.graph_runtime_env()` / `kimi_io_env()` do not need to strip these keys (LocalRunner copies `os.environ` then overlays node env). Harden playbooks by passing `KIMI_SHARE_DIR`, `KIMI_BASE_URL`, `KIMI_MODEL_NAME`, `OPENAI_*`, and `OPENROUTER_*` through node env. Separately, playbooks `extra_args=["--config", …]` only defines `models.midkernel` while agentflow adds `--model moonshotai/kimi-k3` — that mismatch is what produced `LLM not set` on `cmtudf0470003jp040742shv6` / `cmtudm8f20003i90462yr3vxq`. Runner now covers the fallback; playbooks should still add the OpenRouter slug aliases (or drop the mismatched `--model`) so `--config` itself resolves.
 - After cloning playbooks, runner `chmod +x` + `--version` short-circuit on `pipelines/_node_io.py` so agentflow `kimi_ready` (`<executable> --version` in the prepared local shell) execs `MIDKERNEL_KIMI_BIN` instead of wrap_kimi. PATH `kimi --version` also execs the real binary with no prepare/publish
 - `BASH_ENV=/opt/midkernel/node-env.sh` — same prepare when agentflow uses `bash -c`; graph mode skips target clone and the report EXIT trap (`prepare_node(clone_target=False)` still injects GITHUB_TOKEN + OpenRouter)
 

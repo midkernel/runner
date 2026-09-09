@@ -18,7 +18,11 @@ from pathlib import Path
 
 from midkernel_runner.clone import CloneError, clone_repository
 from midkernel_runner.config import ConfigError, RunConfig, load_config, load_optional_run_context
-from midkernel_runner.kimi import export_kimi_openrouter_env, write_kimi_openrouter_config
+from midkernel_runner.kimi import (
+    export_kimi_openrouter_env,
+    graph_kimi_share_dir,
+    write_kimi_openrouter_config,
+)
 from midkernel_runner.mode import should_clone_target
 from midkernel_runner.secrets import HarnessSecrets, SecretsError, load_harness_secrets
 
@@ -37,8 +41,15 @@ class PreparedNode:
     cloned: bool
 
 
-def apply_openrouter_env(api_key: str) -> None:
-    for key, value in export_kimi_openrouter_env({}, api_key).items():
+def apply_openrouter_env(
+    api_key: str,
+    *,
+    model: str | None = None,
+    share_dir: Path | None = None,
+) -> None:
+    for key, value in export_kimi_openrouter_env(
+        {}, api_key, model=model, share_dir=share_dir
+    ).items():
         os.environ[key] = value
 
 
@@ -85,8 +96,15 @@ def prepare_node(
     if secrets and secrets.openrouter_api_key:
         model = (env.get("OPENROUTER_MODEL") or env.get("MODEL") or "moonshotai/kimi-k3").strip()
         home = Path(env.get("HOME") or os.environ.get("HOME") or "/home/agent")
-        kimi_path = write_kimi_openrouter_config(secrets.openrouter_api_key, model, home=home)
-        apply_openrouter_env(secrets.openrouter_api_key)
+        workdir = (config.workdir if config is not None else None) or env.get("WORKDIR") or "/workspace"
+        share = graph_kimi_share_dir(workdir)
+        # WORKDIR share dir is what in-task kimi.bin reads (KIMI_SHARE_DIR).
+        # Also write ~/.kimi for BASH_ENV / PATH wrapper / single-kimi.
+        kimi_path = write_kimi_openrouter_config(
+            secrets.openrouter_api_key, model, share_dir=share
+        )
+        write_kimi_openrouter_config(secrets.openrouter_api_key, model, home=home)
+        apply_openrouter_env(secrets.openrouter_api_key, model=model, share_dir=share)
         if secrets.github_token:
             os.environ["GITHUB_TOKEN"] = secrets.github_token
 

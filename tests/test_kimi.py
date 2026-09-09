@@ -1,9 +1,11 @@
 from midkernel_runner.config import load_config
 from midkernel_runner.kimi import (
     KimiError,
+    OPENROUTER_BASE_URL,
     build_prompt,
     export_kimi_openrouter_env,
     extract_text_from_kimi_stdout,
+    graph_kimi_share_dir,
     kimi_model_aliases,
     openrouter_slug,
     render_kimi_openrouter_config,
@@ -21,6 +23,7 @@ def test_openrouter_slug_strips_provider_prefix():
 def test_model_aliases_cover_agentflow_and_app():
     aliases = kimi_model_aliases("moonshotai/kimi-k3")
     assert "kimi-k3" in aliases
+    assert "midkernel" in aliases
     assert "moonshotai/kimi-k3" in aliases
     assert "openrouter/moonshotai/kimi-k3" in aliases
 
@@ -33,6 +36,7 @@ def test_config_toml_is_openai_legacy_openrouter():
     assert 'model = "moonshotai/kimi-k3"' in text
     assert '[models."moonshotai/kimi-k3"]' in text
     assert '[models."openrouter/moonshotai/kimi-k3"]' in text
+    assert "[models.midkernel]" in text
 
 
 def test_export_sets_openai_key_for_legacy_provider():
@@ -41,13 +45,42 @@ def test_export_sets_openai_key_for_legacy_provider():
     assert env["OPENROUTER_API_KEY"] == "sk-or-v1-x"
     assert env["KIMI_API_KEY"] == "sk-or-v1-x"
     assert env["OPENAI_BASE_URL"] == "https://openrouter.ai/api/v1"
+    assert env["KIMI_BASE_URL"] == OPENROUTER_BASE_URL
+    assert env["KIMI_MODEL_NAME"] == "moonshotai/kimi-k3"
     assert "AI_GATEWAY_API_KEY" not in env
+
+
+def test_export_sets_dummy_kimi_fallback_and_share_dir(tmp_path):
+    """kimi-cli 1.49: unmatched --model → type=kimi needs KIMI_BASE_URL + KIMI_MODEL_NAME."""
+    share = graph_kimi_share_dir(tmp_path)
+    env = export_kimi_openrouter_env(
+        {},
+        "sk-or-v1-x",
+        model="openrouter/moonshotai/kimi-k3",
+        share_dir=share,
+    )
+    assert env["KIMI_BASE_URL"] == OPENROUTER_BASE_URL
+    assert env["KIMI_MODEL_NAME"] == "moonshotai/kimi-k3"
+    assert env["KIMI_SHARE_DIR"] == str(share)
+    assert env["OPENROUTER_MODEL"] == "moonshotai/kimi-k3"
 
 
 def test_write_config_mode_600(tmp_path):
     path = write_kimi_openrouter_config("sk-or-v1-test", "moonshotai/kimi-k3", home=tmp_path)
     assert path == tmp_path / ".kimi" / "config.toml"
     assert oct(path.stat().st_mode)[-3:] == "600"
+
+
+def test_write_config_share_dir_beats_home(tmp_path):
+    share = graph_kimi_share_dir(tmp_path / "ws")
+    path = write_kimi_openrouter_config(
+        "sk-or-v1-test",
+        "moonshotai/kimi-k3",
+        home=tmp_path / "home",
+        share_dir=share,
+    )
+    assert path == share / "config.toml"
+    assert "midkernel" in path.read_text(encoding="utf-8")
 
 
 def test_prompt_requires_report_path():

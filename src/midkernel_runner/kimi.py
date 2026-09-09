@@ -5,9 +5,13 @@ agentenv/agentflow's Kimi adapter launches:
     kimi --print --output-format stream-json --yolo -p <prompt> [--model ...]
 
 For OpenRouter, kimi-cli 1.49 uses an ``openai_legacy`` provider and reads
-``OPENAI_API_KEY`` (not ``KIMI_API_KEY``). This module writes ``~/.kimi/config.toml``
-with OpenRouter aliases so both Midkernel and stock agentflow ``--model`` values
-resolve.
+``OPENAI_API_KEY`` (not ``KIMI_API_KEY``). This module writes
+``$KIMI_SHARE_DIR/config.toml`` (in-task: ``$WORKDIR/.midkernel/kimi``) and
+``~/.kimi/config.toml`` with OpenRouter aliases so Midkernel, playbooks
+``midkernel``, and stock agentflow ``--model`` values resolve. When
+``--model`` is missing from playbooks ``--config``, kimi-cli falls back to
+an empty ``type=kimi`` provider; ``KIMI_BASE_URL`` + ``KIMI_MODEL_NAME``
+keep ``create_llm`` from returning None (``LLM not set``).
 """
 
 from __future__ import annotations
@@ -41,7 +45,9 @@ def openrouter_slug(model: str) -> str:
 
 def kimi_model_aliases(model: str) -> list[str]:
     slug = openrouter_slug(model)
-    aliases = ["kimi-k3", slug, f"openrouter/{slug}"]
+    # ``midkernel`` is the alias playbooks --config uses as default_model.
+    # agentflow still passes ``--model <openrouter slug>``. Both must resolve.
+    aliases = ["kimi-k3", "midkernel", slug, f"openrouter/{slug}"]
     seen: set[str] = set()
     ordered: list[str] = []
     for name in aliases:
@@ -49,6 +55,19 @@ def kimi_model_aliases(model: str) -> list[str]:
             seen.add(name)
             ordered.append(name)
     return ordered
+
+
+def graph_kimi_share_dir(workdir: str | Path) -> Path:
+    """HOME-independent kimi-cli share dir for in-task graph nodes.
+
+    Playbooks ``prepare`` rewrites ``$HOME/.kimi/config.toml`` to a
+    ``midkernel``-only file, and ``BASH_ENV=/dev/null`` skips node-env
+    prepare. kimi-cli 1.49 reads ``KIMI_SHARE_DIR/config.toml`` (else
+    ``~/.kimi/config.toml``). Pin the share dir under WORKDIR so every
+    Kimi node (review, threat-model, hunters, judges) sees the same
+    OpenRouter config regardless of HOME/cwd.
+    """
+    return Path(workdir) / ".midkernel" / "kimi"
 
 
 def render_kimi_openrouter_config(api_key: str, model: str) -> str:
@@ -79,11 +98,15 @@ def render_kimi_openrouter_config(api_key: str, model: str) -> str:
     return "\n".join(lines)
 
 
-def kimi_config_path(home: Path | None = None) -> Path:
+def kimi_config_path(home: Path | None = None, *, share_dir: Path | None = None) -> Path:
+    if share_dir is not None:
+        return Path(share_dir) / "config.toml"
+    if home is not None:
+        return Path(home) / ".kimi" / "config.toml"
     override = os.environ.get("KIMI_SHARE_DIR")
     if override:
         return Path(override) / "config.toml"
-    root = Path(home or os.environ.get("HOME") or "/home/agent")
+    root = Path(os.environ.get("HOME") or "/home/agent")
     return root / ".kimi" / "config.toml"
 
 
@@ -92,22 +115,44 @@ def write_kimi_openrouter_config(
     model: str,
     *,
     home: Path | None = None,
+    share_dir: Path | None = None,
 ) -> Path:
-    path = kimi_config_path(home)
+    path = kimi_config_path(home, share_dir=share_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_kimi_openrouter_config(api_key, model), encoding="utf-8")
     path.chmod(0o600)
     return path
 
 
-def export_kimi_openrouter_env(environ: dict[str, str], api_key: str) -> dict[str, str]:
-    """openai_legacy reads OPENAI_API_KEY; agentflow auth_setup also sets KIMI_*."""
+def export_kimi_openrouter_env(
+    environ: dict[str, str],
+    api_key: str,
+    *,
+    model: str | None = None,
+    share_dir: str | Path | None = None,
+) -> dict[str, str]:
+    """Env kimi.bin needs when playbooks exec it with BASH_ENV=/dev/null.
+
+    * ``openai_legacy`` (file / ``--config`` hit): ``OPENAI_API_KEY`` + ``OPENAI_BASE_URL``.
+    * Dummy ``type=kimi`` fallback (``--model`` not in ``--config``): kimi-cli
+      1.49 builds an empty Moonshot provider unless ``KIMI_BASE_URL`` and
+      ``KIMI_MODEL_NAME`` are set; otherwise ``create_llm`` returns None and
+      stdout is ``LLM not set``.
+    """
     out = dict(environ)
+    slug = openrouter_slug(
+        model or out.get("OPENROUTER_MODEL") or out.get("MODEL") or DEFAULT_OPENROUTER_SLUG
+    )
     out["OPENROUTER_API_KEY"] = api_key
     out["OPENAI_API_KEY"] = api_key
     out["OPENAI_BASE_URL"] = OPENROUTER_BASE_URL
-    out.setdefault("KIMI_API_KEY", api_key)
-    out.setdefault("MOONSHOT_API_KEY", api_key)
+    out["KIMI_API_KEY"] = api_key
+    out["MOONSHOT_API_KEY"] = api_key
+    out["KIMI_BASE_URL"] = OPENROUTER_BASE_URL
+    out["KIMI_MODEL_NAME"] = slug
+    out.setdefault("OPENROUTER_MODEL", slug)
+    if share_dir is not None:
+        out["KIMI_SHARE_DIR"] = str(share_dir)
     out.pop("AI_GATEWAY_API_KEY", None)
     out.pop("VERCEL_OIDC_TOKEN", None)
     out.pop("AWS_BEDROCK_REGION", None)
@@ -216,9 +261,13 @@ def run_kimi(
         model_flag,
     ]
 
-    env = export_kimi_openrouter_env(os.environ.copy(), secrets.openrouter_api_key)
+    env = export_kimi_openrouter_env(
+        os.environ.copy(),
+        secrets.openrouter_api_key,
+        model=config.openrouter_model,
+        share_dir=home / ".kimi",
+    )
     env["HOME"] = str(home)
-    env["KIMI_SHARE_DIR"] = str(home / ".kimi")
 
     workdir = config.repo_dir if Path(config.repo_dir).is_dir() else config.workdir
     result = run(
