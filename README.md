@@ -95,6 +95,7 @@ Uploaded via the task role (`s3:PutObject`, SSE-S3). Helpers:
 **Playbooks coordination:** `_node_io.graph_runtime_env()` / `kimi_io_env()` do not need to strip these keys (LocalRunner copies `os.environ` then overlays node env). Harden playbooks by passing `KIMI_SHARE_DIR`, `KIMI_BASE_URL`, `KIMI_MODEL_NAME`, `OPENAI_*`, and `OPENROUTER_*` through node env. Separately, playbooks `extra_args=["--config", …]` only defines `models.midkernel` while agentflow adds `--model moonshotai/kimi-k3` — that mismatch is what produced `LLM not set` on `cmtudf0470003jp040742shv6` / `cmtudm8f20003i90462yr3vxq`. Runner now covers the fallback; playbooks should still add the OpenRouter slug aliases (or drop the mismatched `--model`) so `--config` itself resolves.
 - After cloning playbooks, runner `chmod +x` + `--version` short-circuit on `pipelines/_node_io.py` so agentflow `kimi_ready` (`<executable> --version` in the prepared local shell) execs `MIDKERNEL_KIMI_BIN` instead of wrap_kimi. PATH `kimi --version` also execs the real binary with no prepare/publish
 - `BASH_ENV=/opt/midkernel/node-env.sh` — same prepare when agentflow uses `bash -c`; graph mode skips target clone and the report EXIT trap (`prepare_node(clone_target=False)` still injects GITHUB_TOKEN + OpenRouter)
+- **Entrypoint / default CMD:** `scripts/entrypoint.sh` does **not** source `node-env.sh` (does **not** run `midkernel-node-prepare`) when `CMD` is `midkernel-default` / `midkernel-runner` and `RUN_ID` is set. GOAL `cmtue7rv90003l104ysmh21eu` died in ~46s with `Clone destination is not empty: /workspace` because entrypoint prepared with `MIDKERNEL_CLONE_TARGET` unset (`should_clone_target()=True`) before `midkernel-runner` could pin graph flags. Runner now calls `apply_graph_mode_flags()` (sets `MIDKERNEL_CLONE_TARGET=0`, `MIDKERNEL_AGENTFLOW_TARGET=local`, `MIDKERNEL_REQUIRE_REPORT=0`) **before** `prepare_node(clone_target=False)`. agentflow `bash -c` still sources `node-env.sh`.
 
 Missing, empty, or stub reports are **not** uploaded; the process exits non-zero.
 
@@ -151,7 +152,7 @@ A **generic** agentflow node (no `RUN_ID`) still runs `kimi` with OpenRouter if 
 | `balanced` | `2048` | `4096` |
 | `max` | `4096` | `8192` |
 
-When the app RunTasks **without** a command override and `RUN_ID` is set, `CMD midkernel-default` runs the graph when `pipelines/<PLAYBOOK>.py` exists (clone playbooks → `agentflow run` → `graph.json` + `nodes/*` + `report.md`). Native agentflow overrides that with `bash -c` + `kimi`.
+When the app RunTasks **without** a command override and `RUN_ID` is set, `CMD midkernel-default` execs `midkernel-runner` **without** an entrypoint clone-prepare. Runner then runs the graph when `pipelines/<PLAYBOOK>.py` exists (clone playbooks → `agentflow run` → `graph.json` + `nodes/*` + `report.md`). Native agentflow overrides that with `bash -c` + `kimi`.
 
 ## CI / publish
 
