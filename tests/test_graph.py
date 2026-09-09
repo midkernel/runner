@@ -22,8 +22,16 @@ _GRAPH_ENV_KEYS = (
     "MIDKERNEL_NODE_IO",
     "MIDKERNEL_AGENTFLOW_TARGET",
     "MIDKERNEL_KIMI_BIN",
+    "MIDKERNEL_GRAPH_KIMI_BIN",
     "MIDKERNEL_CLONE_TARGET",
     "MIDKERNEL_REQUIRE_REPORT",
+    "KIMI_SHARE_DIR",
+    "KIMI_BASE_URL",
+    "KIMI_MODEL_NAME",
+    "OPENROUTER_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "KIMI_API_KEY",
 )
 
 
@@ -90,17 +98,54 @@ def test_apply_graph_env_exports_contract(tmp_path, monkeypatch):
     assert env["WORKDIR"] == str(tmp_path / "ws")
     assert env["MIDKERNEL_NODE_IO"] == "1"
     assert env["MIDKERNEL_AGENTFLOW_TARGET"] == "local"
-    assert env["MIDKERNEL_KIMI_BIN"] == "/opt/midkernel/kimi.bin"
+    assert env["MIDKERNEL_GRAPH_KIMI_BIN"] == "/opt/midkernel/kimi.bin"
+    assert env["MIDKERNEL_KIMI_BIN"] == str(tmp_path / "ws" / ".midkernel" / "bin" / "kimi-openrouter")
     assert env["MIDKERNEL_CLONE_TARGET"] == "0"
     assert env["MIDKERNEL_REQUIRE_REPORT"] == "0"
     assert (tmp_path / "ws" / ".midkernel").is_dir()
+    front = tmp_path / "ws" / ".midkernel" / "bin" / "kimi-openrouter"
+    assert front.is_file()
+    front_text = front.read_text(encoding="utf-8")
+    assert "kimi_graph_bin" in front_text
+    assert "KIMI_REAL_BIN" not in front_text
+    assert "midkernel-publish-report" not in front_text
     shim = tmp_path / "ws" / ".midkernel" / "bin" / "kimi"
     assert shim.is_file()
     assert oct(shim.stat().st_mode)[-3:] == "755"
     text = shim.read_text(encoding="utf-8")
-    assert "/opt/midkernel/kimi.bin" in text
+    assert "kimi-openrouter" in text
     assert "/usr/local/bin/kimi" not in text or "Never fall through" in text
     assert env["PATH"].split(os.pathsep)[0] == str(shim.parent)
+    assert env["KIMI_SHARE_DIR"] == str(tmp_path / "ws" / ".midkernel" / "kimi")
+    assert "OPENROUTER_API_KEY" not in env
+
+
+def test_apply_graph_env_exports_openrouter_for_kimi_bin(tmp_path):
+    """In-task _node_io execs kimi.bin with BASH_ENV=/dev/null — LLM env must be on the dict."""
+    cfg = _cfg(WORKDIR=str(tmp_path / "ws"), OUTPUTS_DIR=str(tmp_path / "out"))
+    env = apply_graph_env(
+        cfg,
+        environ={
+            "OPENROUTER_API_KEY": "sk-or-v1-graph",
+            "OPENROUTER_MODEL": "moonshotai/kimi-k3",
+            "PATH": "/usr/bin",
+        },
+    )
+    share = tmp_path / "ws" / ".midkernel" / "kimi"
+    assert env["KIMI_SHARE_DIR"] == str(share)
+    assert env["OPENAI_API_KEY"] == "sk-or-v1-graph"
+    assert env["OPENAI_BASE_URL"] == "https://openrouter.ai/api/v1"
+    assert env["KIMI_API_KEY"] == "sk-or-v1-graph"
+    assert env["KIMI_BASE_URL"] == "https://openrouter.ai/api/v1"
+    assert env["KIMI_MODEL_NAME"] == "moonshotai/kimi-k3"
+    config_path = share / "config.toml"
+    assert config_path.is_file()
+    text = config_path.read_text(encoding="utf-8")
+    assert "openai_legacy" in text
+    assert "midkernel" in text
+    assert "moonshotai/kimi-k3" in text
+    assert env["MIDKERNEL_KIMI_BIN"].endswith("kimi-openrouter")
+    assert env["MIDKERNEL_GRAPH_KIMI_BIN"] == "/opt/midkernel/kimi.bin"
 
 
 def test_apply_graph_env_path_shim_beats_wrapper(tmp_path):
@@ -152,12 +197,16 @@ def test_run_playbooks_graph_invokes_agentflow(tmp_path, monkeypatch):
     assert seen["cmd"][1] == "run"
     assert seen["cmd"][2].endswith("goal-security-review.py")
     assert seen["cwd"] == str(playbooks)
-    assert seen["env"].get("MIDKERNEL_KIMI_BIN") == "/opt/midkernel/kimi.bin"
+    assert seen["env"].get("MIDKERNEL_GRAPH_KIMI_BIN") == "/opt/midkernel/kimi.bin"
+    assert seen["env"].get("MIDKERNEL_KIMI_BIN") == str(
+        tmp_path / "ws" / ".midkernel" / "bin" / "kimi-openrouter"
+    )
     assert seen["env"].get("MIDKERNEL_CLONE_TARGET") == "0"
     assert seen["env"].get("MIDKERNEL_REQUIRE_REPORT") == "0"
     assert seen["env"].get("MIDKERNEL_AGENTFLOW_TARGET") == "local"
     shim_dir = str(tmp_path / "ws" / ".midkernel" / "bin")
     assert seen["env"]["PATH"].split(os.pathsep)[0] == shim_dir
+    assert seen["env"].get("KIMI_SHARE_DIR") == str(tmp_path / "ws" / ".midkernel" / "kimi")
 
 
 def test_run_playbooks_graph_prefers_ecs_in_task(tmp_path, monkeypatch):
