@@ -23,8 +23,8 @@ from midkernel_runner.openrouter_tokens import (
 )
 
 
-def test_default_is_32768_never_131072():
-    assert DEFAULT_MAX_TOKENS == 32_768
+def test_default_is_16384_never_131072():
+    assert DEFAULT_MAX_TOKENS == 16_384
     assert resolve_max_tokens({}) == DEFAULT_MAX_TOKENS
     assert resolve_max_tokens({}) != UNSAFE_OPENROUTER_DEFAULT
     assert clamp_max_tokens(UNSAFE_OPENROUTER_DEFAULT) == DEFAULT_MAX_TOKENS
@@ -42,13 +42,19 @@ def test_env_131072_is_treated_as_unsafe_default():
     assert resolve_max_tokens({"KIMI_MAX_TOKENS": "131072"}) == DEFAULT_MAX_TOKENS
 
 
-def test_over_ceiling_becomes_32768_not_min_65536():
+def test_over_ceiling_becomes_16384_not_min_65536():
     """Playbooks lockstep: 80000 must not become 65536 via min(value, 65536)."""
     assert clamp_max_tokens(80_000) == DEFAULT_MAX_TOKENS
     assert clamp_max_tokens(80_000) != MAX_SAFE_MAX_TOKENS
     assert clamp_max_tokens(65_537) == DEFAULT_MAX_TOKENS
     assert resolve_max_tokens({"MIDKERNEL_OPENROUTER_MAX_TOKENS": "80000"}) == DEFAULT_MAX_TOKENS
     assert resolve_max_tokens({"OPENROUTER_MAX_TOKENS": "80000"}) == DEFAULT_MAX_TOKENS
+
+
+def test_explicit_32768_is_allowed_under_ceiling():
+    """Old default stays legal; only missing / unsafe values drop to 16384."""
+    assert clamp_max_tokens(32_768) == 32_768
+    assert resolve_max_tokens({"OPENROUTER_MAX_TOKENS": "32768"}) == 32_768
 
 
 def test_env_first_wins_order_matches_playbooks():
@@ -109,11 +115,11 @@ def test_kimi_max_tokens_alias_is_accepted():
 
 def test_max_tokens_env_exports_all_aliases():
     env = max_tokens_env(DEFAULT_MAX_TOKENS)
-    assert env["OPENROUTER_MAX_TOKENS"] == "32768"
-    assert env["KIMI_MAX_TOKENS"] == "32768"
-    assert env["KIMI_MODEL_MAX_TOKENS"] == "32768"
-    assert env["KIMI_MODEL_MAX_COMPLETION_TOKENS"] == "32768"
-    assert env["MIDKERNEL_OPENROUTER_MAX_TOKENS"] == "32768"
+    assert env["OPENROUTER_MAX_TOKENS"] == "16384"
+    assert env["KIMI_MAX_TOKENS"] == "16384"
+    assert env["KIMI_MODEL_MAX_TOKENS"] == "16384"
+    assert env["KIMI_MODEL_MAX_COMPLETION_TOKENS"] == "16384"
+    assert env["MIDKERNEL_OPENROUTER_MAX_TOKENS"] == "16384"
 
 
 def test_cli_clamp_does_not_copy_context_size():
@@ -121,17 +127,17 @@ def test_cli_clamp_does_not_copy_context_size():
         ["--print", "--max-tokens", "262144", "-p", "hunt"],
         DEFAULT_MAX_TOKENS,
     )
-    assert out[out.index("--max-tokens") + 1] == "32768"
+    assert out[out.index("--max-tokens") + 1] == "16384"
     assert "262144" not in out
     assert "131072" not in out
 
 
-def test_cli_clamp_over_ceiling_becomes_32768_not_65536():
+def test_cli_clamp_over_ceiling_becomes_16384_not_65536():
     out = clamp_max_token_cli_flags(
         ["--max-completion-tokens", "80000"],
         DEFAULT_MAX_TOKENS,
     )
-    assert out[out.index("--max-completion-tokens") + 1] == "32768"
+    assert out[out.index("--max-completion-tokens") + 1] == "16384"
     assert "80000" not in out
     assert "65536" not in out
 
@@ -140,6 +146,8 @@ def test_sitecustomize_fails_loud_and_does_not_swallow_errors(tmp_path):
     text = sitecustomize_source()
     assert "max_context_size" in text
     assert "cmtufzqzo0003k004mt2w0m9c" in text
+    assert "cmtulxq7v0003l2046bhhc3yl" in text
+    assert "16384" in text
     assert "except Exception" not in text
     assert "required=True" in text
     assert "max_completion_tokens" in text
@@ -202,8 +210,8 @@ def _install_fake_openai_legacy():
     return OpenAILegacy, completions_calls
 
 
-def test_monkeypatch_puts_max_tokens_32768_on_chat_completions_kwargs():
-    """Outbound chat.completions.create must carry max_tokens=32768, never 131072."""
+def test_monkeypatch_puts_max_tokens_16384_on_chat_completions_kwargs():
+    """Outbound chat.completions.create must carry max_tokens=16384, never 131072."""
     OpenAILegacy, calls = _install_fake_openai_legacy()
     assert install_openai_legacy_max_tokens_cap({}) is True
     provider = OpenAILegacy(model="moonshotai/kimi-k3")
