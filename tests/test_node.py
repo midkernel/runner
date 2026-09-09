@@ -1,3 +1,5 @@
+import os
+
 from midkernel_runner.config import load_optional_run_context
 from midkernel_runner.node import prepare_node
 from midkernel_runner.publish import candidate_report_paths, find_report_path, publish_report
@@ -23,6 +25,68 @@ def test_prepare_node_writes_kimi_config_from_env(tmp_path, monkeypatch):
     text = prepared.kimi_config_path.read_text(encoding="utf-8")
     assert "openai_legacy" in text
     assert "openrouter.ai" in text
+
+
+def test_prepare_node_clone_target_false_injects_secrets(tmp_path, monkeypatch):
+    """Playbooks prepare needs GITHUB_TOKEN + OpenRouter without filling WORKDIR."""
+    home = tmp_path / "home"
+    work = tmp_path / "workspace"
+    (work / ".midkernel" / "playbooks").mkdir(parents=True)
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    def boom(*_a, **_k):
+        raise AssertionError("must not clone target when clone_target=False")
+
+    monkeypatch.setattr("midkernel_runner.node.clone_repository", boom)
+    env = {
+        "RUN_ID": "cmtuavpvs0003ib04bfyr7roc",
+        "GITHUB_OWNER": "acme",
+        "GITHUB_NAME": "target",
+        "HOME": str(home),
+        "WORKDIR": str(work),
+        "MIDKERNEL_LOCAL": "1",
+        "OPENROUTER_API_KEY": "sk-or-v1-graph",
+        "GITHUB_TOKEN": "ghs_from_app",
+        "MIDKERNEL_AGENTFLOW_TARGET": "local",
+        "MIDKERNEL_CLONE_TARGET": "0",
+    }
+    prepared = prepare_node(environ=env, clone_target=False)
+    assert prepared.cloned is False
+    assert prepared.secrets is not None
+    assert prepared.secrets.openrouter_api_key == "sk-or-v1-graph"
+    assert prepared.secrets.github_token == "ghs_from_app"
+    assert prepared.kimi_config_path is not None
+    assert "openrouter.ai" in prepared.kimi_config_path.read_text(encoding="utf-8")
+    assert os.environ["GITHUB_TOKEN"] == "ghs_from_app"
+    assert os.environ["OPENROUTER_API_KEY"] == "sk-or-v1-graph"
+    assert os.environ["OPENAI_API_KEY"] == "sk-or-v1-graph"
+
+
+def test_prepare_node_honors_clone_target_env(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    work = tmp_path / "workspace"
+    (work / ".midkernel").mkdir(parents=True)
+    home.mkdir()
+    monkeypatch.setattr(
+        "midkernel_runner.node.clone_repository",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("env said skip clone")),
+    )
+    env = {
+        "RUN_ID": "r-graph",
+        "GITHUB_OWNER": "acme",
+        "GITHUB_NAME": "target",
+        "HOME": str(home),
+        "WORKDIR": str(work),
+        "MIDKERNEL_LOCAL": "1",
+        "OPENROUTER_API_KEY": "sk-or-v1-x",
+        "GITHUB_TOKEN": "ghs_x",
+        "MIDKERNEL_CLONE_TARGET": "0",
+    }
+    prepared = prepare_node(environ=env)
+    assert prepared.cloned is False
+    assert prepared.secrets is not None
+    assert prepared.secrets.github_token == "ghs_x"
 
 
 def test_publish_skips_without_midkernel_env(tmp_path, monkeypatch):

@@ -19,6 +19,7 @@ from pathlib import Path
 from midkernel_runner.clone import CloneError, clone_repository
 from midkernel_runner.config import ConfigError, RunConfig, load_config, load_optional_run_context
 from midkernel_runner.kimi import export_kimi_openrouter_env, write_kimi_openrouter_config
+from midkernel_runner.mode import should_clone_target
 from midkernel_runner.secrets import HarnessSecrets, SecretsError, load_harness_secrets
 
 LOG = logging.getLogger("midkernel.node")
@@ -44,9 +45,11 @@ def apply_openrouter_env(api_key: str) -> None:
 def prepare_node(
     *,
     environ: dict[str, str] | None = None,
-    clone_target: bool = True,
+    clone_target: bool | None = None,
 ) -> PreparedNode:
     env = dict(os.environ if environ is None else environ)
+    if clone_target is None:
+        clone_target = should_clone_target(env)
     context = load_optional_run_context(env)
     secrets: HarnessSecrets | None = None
     config: RunConfig | None = None
