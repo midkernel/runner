@@ -68,16 +68,25 @@ Stock agentflow ECS does not set `taskRoleArn`. Midkernel app must `RegisterTask
 
 ## Artifact contract
 
-Nodes write **`report.md`** (prefer `/outputs/report.md`). When `RUN_ID` is set, the node uploads to:
+When `RUN_ID` is set and midkernel/playbooks has ``pipelines/<PLAYBOOK>.py``, **`midkernel-runner` clones playbooks and runs the Python graph in-task** (`MIDKERNEL_AGENTFLOW_TARGET=local`, `MIDKERNEL_NODE_IO=1`, `WORKDIR=/workspace`, `MIDKERNEL_KIMI_BIN=/opt/midkernel/kimi.bin`). That is what writes:
 
 ```text
 s3://midkernel-dev-artifacts/runs/<RUN_ID>/report.md
+s3://midkernel-dev-artifacts/runs/<RUN_ID>/graph.json
+s3://midkernel-dev-artifacts/runs/<RUN_ID>/nodes/<nodeId>/prompt.md
+s3://midkernel-dev-artifacts/runs/<RUN_ID>/nodes/<nodeId>/output.md
+s3://midkernel-dev-artifacts/runs/<RUN_ID>/nodes/<nodeId>/meta.json
 ```
+
+Dogfood `cmtu8jtu00003l1043oi0at41` only uploaded `report.md` because this image used to fetch `<slug>.md` and run one kimi — `_node_io.py` never ran. `MIDKERNEL_FORCE_MD_KIMI=1` restores that fallback. `MIDKERNEL_FORCE_GRAPH=1` forces the graph path.
+
+When no pipeline file exists, the node still writes **`report.md`** (prefer `/outputs/report.md`) via the single-kimi helper.
 
 via the task role (`s3:PutObject`, SSE-S3). Helpers:
 
-- `midkernel-publish-report` — find + validate + upload
-- `kimi` PATH wrapper — prepare OpenRouter, run real kimi, then publish if `RUN_ID` is set
+- `midkernel-publish-report` — find + validate + upload (md+kimi fallback)
+- `scripts/ecs-in-task.sh` on playbooks — `agentflow run pipelines/${PLAYBOOK}.py`
+- `kimi` PATH wrapper — prepare OpenRouter, run real kimi, then publish if `RUN_ID` is set (graph nodes must use `/opt/midkernel/kimi.bin` so this wrapper does not require `report.md` after every hunter)
 - `BASH_ENV=/opt/midkernel/node-env.sh` — same prepare when agentflow uses `bash -c`
 
 Missing, empty, or stub reports are **not** uploaded; the process exits non-zero.
@@ -102,7 +111,7 @@ The image never reads `AI_GATEWAY_API_KEY` / `VERCEL_OIDC_TOKEN`.
 Aligned with `midkernel/app` `src/lib/agentflow-contract.ts`. App names and runner names are both accepted.
 
 | Variable | Required for Scan | App alias | Notes |
-| --- | --- | --- | --- |
+| --- | --- |
 | `RUN_ID` | yes (artifacts) | — | `[A-Za-z0-9._:-]{1,128}` |
 | `GITHUB_OWNER` | yes (clone) | — | |
 | `GITHUB_NAME` | yes (clone) | — | |
@@ -126,12 +135,12 @@ A **generic** agentflow node (no `RUN_ID`) still runs `kimi` with OpenRouter if 
 `examples/task-definition.json` / `examples/runtask.json`. Family `midkernel-dev-scan` or app-registered `midkernel-agentflow-agents`. Logs: `/agentflow`. Capacity: Fargate Spot preferred.
 
 | Profile | cpu | memory |
-| --- | --- | --- |
+| --- | --- |
 | `low` | `1024` | `2048` |
 | `balanced` | `2048` | `4096` |
 | `max` | `4096` | `8192` |
 
-When the app RunTasks **without** a command override and `RUN_ID` is set, `CMD midkernel-default` runs the Kimi scan helper (clone playbook repo → kimi → upload). Native agentflow overrides that with `bash -c` + `kimi`.
+When the app RunTasks **without** a command override and `RUN_ID` is set, `CMD midkernel-default` runs the graph when `pipelines/<PLAYBOOK>.py` exists (clone playbooks → `agentflow run` → `graph.json` + `nodes/*` + `report.md`). Native agentflow overrides that with `bash -c` + `kimi`.
 
 ## CI / publish
 
