@@ -31,6 +31,7 @@ _GRAPH_ENV_KEYS = (
     "KIMI_MODEL_NAME",
     "KIMI_MODEL_MAX_TOKENS",
     "KIMI_MODEL_MAX_COMPLETION_TOKENS",
+    "KIMI_MAX_TOKENS",
     "OPENROUTER_MAX_TOKENS",
     "MIDKERNEL_OPENROUTER_MAX_TOKENS",
     "OPENROUTER_API_KEY",
@@ -153,10 +154,31 @@ def test_apply_graph_env_exports_openrouter_for_kimi_bin(tmp_path):
     assert f"max_tokens = {DEFAULT_MAX_TOKENS}" in text
     assert f"max_tokens = {UNSAFE_OPENROUTER_DEFAULT}" not in text
     assert env["KIMI_MODEL_MAX_TOKENS"] == str(DEFAULT_MAX_TOKENS)
+    assert env["KIMI_MAX_TOKENS"] == str(DEFAULT_MAX_TOKENS)
     assert env["OPENROUTER_MAX_TOKENS"] == str(DEFAULT_MAX_TOKENS)
     assert env["PYTHONPATH"].split(os.pathsep)[0].endswith("py_path")
     assert env["MIDKERNEL_KIMI_BIN"].endswith("kimi-openrouter")
     assert env["MIDKERNEL_GRAPH_KIMI_BIN"] == "/opt/midkernel/kimi.bin"
+
+
+def test_apply_graph_env_preserves_wrap_kimi_injection_proxy(tmp_path):
+    proxy = "http://127.0.0.1:54321/api/v1"
+    cfg = _cfg(WORKDIR=str(tmp_path / "ws"), OUTPUTS_DIR=str(tmp_path / "out"))
+    env = apply_graph_env(
+        cfg,
+        environ={
+            "OPENROUTER_API_KEY": "sk-or-v1-graph",
+            "OPENROUTER_MODEL": "moonshotai/kimi-k3",
+            "OPENAI_BASE_URL": proxy,
+            "PATH": "/usr/bin",
+        },
+    )
+    assert env["OPENAI_BASE_URL"] == proxy
+    assert env["KIMI_BASE_URL"] == proxy
+    text = (tmp_path / "ws" / ".midkernel" / "kimi" / "config.toml").read_text(encoding="utf-8")
+    assert f'base_url = "{proxy}"' in text
+    assert "openrouter.ai" not in text
+    assert f"max_tokens = {DEFAULT_MAX_TOKENS}" in text
 
 
 def test_apply_graph_env_path_shim_beats_wrapper(tmp_path):

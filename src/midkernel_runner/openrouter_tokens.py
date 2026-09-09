@@ -9,7 +9,7 @@ reserves the model max (131072). ``max_context_size`` (262144) must never be
 copied into ``max_tokens`` — half of that is also 131072.
 
 Default is **32768** (safe under the 68k floor). Hard ceiling **65536**.
-Never default 131072.
+Treat ``>= 131072`` as the unsafe catalog default → 32768.
 """
 
 from __future__ import annotations
@@ -17,16 +17,19 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from urllib.parse import urlsplit
 
 DEFAULT_MAX_TOKENS = 32_768
 MAX_SAFE_MAX_TOKENS = 65_536
 UNSAFE_OPENROUTER_DEFAULT = 131_072
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 MAX_TOKENS_ENV_KEYS = (
     "MIDKERNEL_OPENROUTER_MAX_TOKENS",
     "OPENROUTER_MAX_TOKENS",
-    "KIMI_MODEL_MAX_COMPLETION_TOKENS",
+    "KIMI_MAX_TOKENS",
     "KIMI_MODEL_MAX_TOKENS",
+    "KIMI_MODEL_MAX_COMPLETION_TOKENS",
 )
 
 MAX_TOKEN_CLI_FLAGS = frozenset(
@@ -40,6 +43,12 @@ MAX_TOKEN_CLI_FLAGS = frozenset(
 
 SITECUSTOMIZE_NAME = "sitecustomize.py"
 SITECUSTOMIZE_DIRNAME = "py_path"
+INJECTION_PROXY_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_CONFIG_BASE_URL_PREFIX = "base_url"
+
+
+class OpenRouterMaxTokensCapError(RuntimeError):
+    """sitecustomize / OpenAILegacy max_tokens patch did not install."""
 
 
 def clamp_max_tokens(value: int) -> int:
@@ -73,12 +82,62 @@ def resolve_max_tokens(environ: Mapping[str, str] | None = None) -> int:
 def max_tokens_env(max_tokens: int | None = None) -> dict[str, str]:
     cap = DEFAULT_MAX_TOKENS if max_tokens is None else clamp_max_tokens(max_tokens)
     text = str(cap)
-    return {
-        "MIDKERNEL_OPENROUTER_MAX_TOKENS": text,
-        "OPENROUTER_MAX_TOKENS": text,
-        "KIMI_MODEL_MAX_COMPLETION_TOKENS": text,
-        "KIMI_MODEL_MAX_TOKENS": text,
-    }
+    return {key: text for key in MAX_TOKENS_ENV_KEYS}
+
+
+def is_injection_proxy_url(url: str | None) -> bool:
+    """True when playbooks wrap_kimi already pointed traffic at localhost."""
+    text = (url or "").strip()
+    if not text:
+        return False
+    parts = urlsplit(text)
+    host = (parts.hostname or "").lower()
+    if host in INJECTION_PROXY_HOSTS:
+        return True
+    lowered = text.lower()
+    return "127.0.0.1" in lowered or "localhost" in lowered or "[::1]" in lowered
+
+
+def read_config_base_url(path: Path) -> str | None:
+    """Read ``base_url`` from an existing kimi ``config.toml`` if present."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith(_CONFIG_BASE_URL_PREFIX):
+            continue
+        _, _, rest = line.partition("=")
+        value = rest.strip().strip('"').strip("'")
+        if value:
+            return value
+    return None
+
+
+def resolve_provider_base_url(
+    environ: Mapping[str, str] | None = None,
+    *,
+    explicit: str | None = None,
+    config_path: Path | None = None,
+) -> str:
+    """Keep wrap_kimi's localhost proxy. Never rewrite it to OpenRouter."""
+    candidates: list[str] = []
+    if explicit and explicit.strip():
+        candidates.append(explicit.strip())
+    env = os.environ if environ is None else environ
+    for key in ("OPENAI_BASE_URL", "KIMI_BASE_URL"):
+        value = (env.get(key) or "").strip()
+        if value:
+            candidates.append(value)
+    if config_path is not None:
+        existing = read_config_base_url(Path(config_path))
+        if existing:
+            candidates.append(existing)
+    for url in candidates:
+        if is_injection_proxy_url(url):
+            return url.rstrip("/")
+    return OPENROUTER_BASE_URL
 
 
 def sitecustomize_dir(share_dir: Path) -> Path:
@@ -89,11 +148,10 @@ def sitecustomize_source() -> str:
     return (
         "# Midkernel: cap openai_legacy max_tokens. Do not treat max_context_size\n"
         "# as the completion budget (GOAL cmtufzqzo0003k004mt2w0m9c 402).\n"
-        "try:\n"
-        "    from midkernel_runner.openrouter_tokens import install_openai_legacy_max_tokens_cap\n"
-        "    install_openai_legacy_max_tokens_cap()\n"
-        "except Exception:\n"
-        "    pass\n"
+        "# Fail loud if the OpenAILegacy cap does not install — a swallowed\n"
+        "# error would leave 131072 on the wire.\n"
+        "from midkernel_runner.openrouter_tokens import install_openai_legacy_max_tokens_cap\n"
+        "install_openai_legacy_max_tokens_cap(required=True)\n"
     )
 
 
@@ -143,17 +201,74 @@ def clamp_max_token_cli_flags(argv: list[str], max_tokens: int) -> list[str]:
     return out
 
 
-def install_openai_legacy_max_tokens_cap(environ: Mapping[str, str] | None = None) -> bool:
+def apply_max_tokens_to_kwargs(kwargs: dict, cap: int) -> dict:
+    """Force a safe ``max_tokens`` onto outbound chat.completions kwargs."""
+    current = kwargs.get("max_tokens")
+    if current is None:
+        kwargs["max_tokens"] = cap
+        return kwargs
+    try:
+        numeric = int(current)
+    except (TypeError, ValueError):
+        kwargs["max_tokens"] = cap
+        return kwargs
+    if numeric <= 0 or numeric >= UNSAFE_OPENROUTER_DEFAULT or numeric > cap:
+        kwargs["max_tokens"] = cap
+    return kwargs
+
+
+def _ensure_generation_cap(provider: object, cap: int) -> None:
+    generation = getattr(provider, "_generation_kwargs", None)
+    if not isinstance(generation, dict):
+        return
+    apply_max_tokens_to_kwargs(generation, cap)
+
+
+def _patch_completions_create(provider: object, cap: int) -> None:
+    client = getattr(provider, "client", None)
+    chat = getattr(client, "chat", None)
+    completions = getattr(chat, "completions", None)
+    create = getattr(completions, "create", None)
+    if create is None:
+        raise OpenRouterMaxTokensCapError(
+            "OpenAILegacy client.chat.completions.create is missing; "
+            "refusing to leave max_tokens=131072 on the wire"
+        )
+    if getattr(create, "_midkernel_max_tokens_capped", False):
+        return
+
+    def wrapped_create(*args, **kwargs):
+        apply_max_tokens_to_kwargs(kwargs, cap)
+        return create(*args, **kwargs)
+
+    wrapped_create._midkernel_max_tokens_capped = True  # type: ignore[attr-defined]
+    completions.create = wrapped_create
+
+
+def install_openai_legacy_max_tokens_cap(
+    environ: Mapping[str, str] | None = None,
+    *,
+    required: bool = False,
+) -> bool:
     """Patch kosong ``OpenAILegacy`` so requests send a capped ``max_tokens``.
 
     kimi-cli 1.49 builds ``openai_legacy`` with empty generation kwargs.
     OpenRouter then reserves the model max (131072) and 402s on a thin wallet.
     The front must not substitute ``max_context_size``.
+
+    When ``required`` is true (sitecustomize on the kimi.bin PYTHONPATH),
+    failure is fatal. A silent skip would put 131072 on the wire.
     """
     cap = resolve_max_tokens(environ)
     try:
         from kosong.contrib.chat_provider.openai_legacy import OpenAILegacy
     except ImportError:
+        if required:
+            raise OpenRouterMaxTokensCapError(
+                "OpenAILegacy max_tokens cap did not install (kosong "
+                "openai_legacy missing). Refusing to send uncapped "
+                "max_tokens=131072."
+            ) from None
         return False
 
     init = OpenAILegacy.__init__
@@ -162,9 +277,8 @@ def install_openai_legacy_max_tokens_cap(environ: Mapping[str, str] | None = Non
 
     def wrapped_init(self, *args, **kwargs):
         init(self, *args, **kwargs)
-        current = self._generation_kwargs.get("max_tokens")
-        if current is None or current >= UNSAFE_OPENROUTER_DEFAULT or current > cap:
-            self._generation_kwargs["max_tokens"] = cap
+        _ensure_generation_cap(self, cap)
+        _patch_completions_create(self, cap)
 
     wrapped_init._midkernel_max_tokens_capped = True  # type: ignore[attr-defined]
     OpenAILegacy.__init__ = wrapped_init  # type: ignore[method-assign]
@@ -177,7 +291,24 @@ def install_openai_legacy_max_tokens_cap(environ: Mapping[str, str] | None = Non
                 kwargs["max_tokens"] = clamp_max_tokens(int(kwargs["max_tokens"]))
             except (TypeError, ValueError):
                 kwargs["max_tokens"] = cap
-        return original_with(self, **kwargs)
+        updated = original_with(self, **kwargs)
+        _ensure_generation_cap(updated, cap)
+        _patch_completions_create(updated, cap)
+        return updated
 
     OpenAILegacy.with_generation_kwargs = wrapped_with  # type: ignore[method-assign]
+
+    original_generate = getattr(OpenAILegacy, "generate", None)
+    if original_generate is not None and not getattr(
+        original_generate, "_midkernel_max_tokens_capped", False
+    ):
+
+        async def wrapped_generate(self, *args, **kwargs):
+            _ensure_generation_cap(self, cap)
+            _patch_completions_create(self, cap)
+            return await original_generate(self, *args, **kwargs)
+
+        wrapped_generate._midkernel_max_tokens_capped = True  # type: ignore[attr-defined]
+        OpenAILegacy.generate = wrapped_generate  # type: ignore[method-assign]
+
     return True

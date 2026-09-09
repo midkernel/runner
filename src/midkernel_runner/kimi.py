@@ -24,10 +24,12 @@ from pathlib import Path
 
 from midkernel_runner.config import RunConfig
 from midkernel_runner.openrouter_tokens import (
+    OPENROUTER_BASE_URL,
     clamp_max_tokens,
     max_tokens_env,
     prepend_pythonpath,
     resolve_max_tokens,
+    resolve_provider_base_url,
     sitecustomize_dir,
     write_openrouter_sitecustomize,
 )
@@ -35,7 +37,6 @@ from midkernel_runner.report import ReportError, persist_report, validate_report
 from midkernel_runner.secrets import HarnessSecrets
 
 KIMI_BIN = os.environ.get("KIMI_BIN", "kimi")
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_OPENROUTER_SLUG = "moonshotai/kimi-k3"
 DEFAULT_CONTEXT = 262_144
 
@@ -84,11 +85,16 @@ def render_kimi_openrouter_config(
     *,
     max_tokens: int | None = None,
     environ: dict[str, str] | None = None,
+    base_url: str | None = None,
+    config_path: Path | None = None,
 ) -> str:
     slug = openrouter_slug(model)
     aliases = kimi_model_aliases(model)
     default_model = aliases[0]
     cap = resolve_max_tokens(environ) if max_tokens is None else clamp_max_tokens(max_tokens)
+    provider_url = resolve_provider_base_url(
+        environ, explicit=base_url, config_path=config_path
+    )
     lines = [
         f'default_model = "{default_model}"',
         "default_yolo = true",
@@ -96,7 +102,7 @@ def render_kimi_openrouter_config(
         "",
         "[providers.openrouter]",
         'type = "openai_legacy"',
-        f'base_url = "{OPENROUTER_BASE_URL}"',
+        f'base_url = "{provider_url}"',
         f'api_key = "{api_key}"',
         "",
     ]
@@ -141,7 +147,13 @@ def write_kimi_openrouter_config(
     path = kimi_config_path(home, share_dir=share_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        render_kimi_openrouter_config(api_key, model, max_tokens=max_tokens, environ=environ),
+        render_kimi_openrouter_config(
+            api_key,
+            model,
+            max_tokens=max_tokens,
+            environ=environ,
+            config_path=path,
+        ),
         encoding="utf-8",
     )
     path.chmod(0o600)
@@ -171,10 +183,11 @@ def export_kimi_openrouter_env(
     )
     out["OPENROUTER_API_KEY"] = api_key
     out["OPENAI_API_KEY"] = api_key
-    out["OPENAI_BASE_URL"] = OPENROUTER_BASE_URL
+    provider_url = resolve_provider_base_url(out)
+    out["OPENAI_BASE_URL"] = provider_url
     out["KIMI_API_KEY"] = api_key
     out["MOONSHOT_API_KEY"] = api_key
-    out["KIMI_BASE_URL"] = OPENROUTER_BASE_URL
+    out["KIMI_BASE_URL"] = provider_url
     out["KIMI_MODEL_NAME"] = slug
     out.setdefault("OPENROUTER_MODEL", slug)
     cap = resolve_max_tokens(out)

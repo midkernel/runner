@@ -105,6 +105,8 @@ def prepare_config_file(argv: list[str], *, environ: dict[str, str] | None = Non
         or DEFAULT_OPENROUTER_SLUG
     ).strip()
     if api_key:
+        # Preserve wrap_kimi's localhost injection proxy when env/config
+        # already points at it. Do not rewrite base_url to openrouter.ai.
         return str(
             write_kimi_openrouter_config(api_key, model, share_dir=Path(share), environ=env)
         )

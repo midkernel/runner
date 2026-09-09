@@ -55,6 +55,7 @@ def test_export_sets_openai_key_for_legacy_provider():
     assert env["KIMI_MODEL_NAME"] == "moonshotai/kimi-k3"
     assert env["KIMI_MODEL_MAX_TOKENS"] == str(DEFAULT_MAX_TOKENS)
     assert env["KIMI_MODEL_MAX_COMPLETION_TOKENS"] == str(DEFAULT_MAX_TOKENS)
+    assert env["KIMI_MAX_TOKENS"] == str(DEFAULT_MAX_TOKENS)
     assert env["OPENROUTER_MAX_TOKENS"] == str(DEFAULT_MAX_TOKENS)
     assert "AI_GATEWAY_API_KEY" not in env
 
@@ -73,7 +74,31 @@ def test_export_sets_dummy_kimi_fallback_and_share_dir(tmp_path):
     assert env["KIMI_SHARE_DIR"] == str(share)
     assert env["OPENROUTER_MODEL"] == "moonshotai/kimi-k3"
     assert env["KIMI_MODEL_MAX_TOKENS"] == str(DEFAULT_MAX_TOKENS)
+    assert env["KIMI_MAX_TOKENS"] == str(DEFAULT_MAX_TOKENS)
     assert env["PYTHONPATH"].split(os.pathsep)[0].endswith("py_path")
+
+
+def test_export_does_not_clobber_wrap_kimi_injection_proxy():
+    proxy = "http://127.0.0.1:54321/api/v1"
+    env = export_kimi_openrouter_env(
+        {"OPENAI_BASE_URL": proxy, "AI_GATEWAY_API_KEY": "nope"},
+        "sk-or-v1-x",
+    )
+    assert env["OPENAI_BASE_URL"] == proxy
+    assert env["KIMI_BASE_URL"] == proxy
+    assert "openrouter.ai" not in env["OPENAI_BASE_URL"]
+
+
+def test_config_toml_preserves_localhost_proxy_base_url():
+    proxy = "http://127.0.0.1:4242/api/v1"
+    text = render_kimi_openrouter_config(
+        "sk-or-v1-test",
+        "moonshotai/kimi-k3",
+        environ={"OPENAI_BASE_URL": proxy},
+    )
+    assert f'base_url = "{proxy}"' in text
+    assert "openrouter.ai" not in text
+    assert f"max_tokens = {DEFAULT_MAX_TOKENS}" in text
 
 
 def test_config_toml_honors_safe_override_and_rejects_131072():

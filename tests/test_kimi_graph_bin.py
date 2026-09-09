@@ -154,3 +154,62 @@ def test_front_exports_capped_tokens_and_sitecustomize(tmp_path):
     assert env["OPENROUTER_MAX_TOKENS"] == str(DEFAULT_MAX_TOKENS)
     assert (share / "py_path" / "sitecustomize.py").is_file()
     assert env["PYTHONPATH"].startswith(str(share / "py_path"))
+    assert env["KIMI_MAX_TOKENS"] == str(DEFAULT_MAX_TOKENS)
+
+
+def test_prepare_config_file_preserves_wrap_kimi_proxy(tmp_path):
+    """Playbooks wrap_kimi localhost injection must survive kimi-openrouter rewrite."""
+    share = tmp_path / "kimi"
+    share.mkdir()
+    proxy = "http://127.0.0.1:54321/api/v1"
+    (share / "config.toml").write_text(
+        "\n".join(
+            [
+                "[providers.openrouter]",
+                'type = "openai_legacy"',
+                f'base_url = "{proxy}"',
+                'api_key = "sk-or-v1-x"',
+                "",
+                "[models.midkernel]",
+                'provider = "openrouter"',
+                'model = "moonshotai/kimi-k3"',
+                "max_context_size = 262144",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    path = prepare_config_file(
+        ["--model", "moonshotai/kimi-k3"],
+        environ={
+            "KIMI_SHARE_DIR": str(share),
+            "OPENROUTER_API_KEY": "sk-or-v1-x",
+            "OPENAI_BASE_URL": proxy,
+        },
+    )
+    assert path == str(share / "config.toml")
+    text = (share / "config.toml").read_text(encoding="utf-8")
+    assert f'base_url = "{proxy}"' in text
+    assert "openrouter.ai" not in text
+    assert f"max_tokens = {DEFAULT_MAX_TOKENS}" in text
+
+
+def test_prepare_config_file_preserves_proxy_from_existing_toml(tmp_path):
+    share = tmp_path / "kimi"
+    share.mkdir()
+    proxy = "http://127.0.0.1:9999/api/v1"
+    (share / "config.toml").write_text(
+        f'[providers.openrouter]\nbase_url = "{proxy}"\napi_key = "sk-or-v1-x"\n',
+        encoding="utf-8",
+    )
+    prepare_config_file(
+        ["--model", "moonshotai/kimi-k3"],
+        environ={
+            "KIMI_SHARE_DIR": str(share),
+            "OPENROUTER_API_KEY": "sk-or-v1-x",
+            "OPENAI_BASE_URL": "https://openrouter.ai/api/v1",
+        },
+    )
+    text = (share / "config.toml").read_text(encoding="utf-8")
+    assert f'base_url = "{proxy}"' in text
+    assert "openrouter.ai" not in text
+    assert f"max_tokens = {DEFAULT_MAX_TOKENS}" in text

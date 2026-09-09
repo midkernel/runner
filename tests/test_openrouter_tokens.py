@@ -1,11 +1,21 @@
+import asyncio
+import sys
+import types
+
+import pytest
+
 from midkernel_runner.openrouter_tokens import (
     DEFAULT_MAX_TOKENS,
     MAX_SAFE_MAX_TOKENS,
     UNSAFE_OPENROUTER_DEFAULT,
+    OpenRouterMaxTokensCapError,
     clamp_max_token_cli_flags,
     clamp_max_tokens,
+    install_openai_legacy_max_tokens_cap,
+    is_injection_proxy_url,
     max_tokens_env,
     resolve_max_tokens,
+    resolve_provider_base_url,
     sitecustomize_source,
     write_openrouter_sitecustomize,
 )
@@ -27,15 +37,21 @@ def test_explicit_65536_is_allowed_ceiling():
 def test_env_131072_is_treated_as_unsafe_default():
     assert resolve_max_tokens({"OPENROUTER_MAX_TOKENS": "131072"}) == DEFAULT_MAX_TOKENS
     assert resolve_max_tokens({"KIMI_MODEL_MAX_TOKENS": "131072"}) == DEFAULT_MAX_TOKENS
+    assert resolve_max_tokens({"KIMI_MAX_TOKENS": "131072"}) == DEFAULT_MAX_TOKENS
 
 
 def test_env_over_ceiling_clamps_to_65536():
     assert resolve_max_tokens({"MIDKERNEL_OPENROUTER_MAX_TOKENS": "80000"}) == MAX_SAFE_MAX_TOKENS
 
 
+def test_kimi_max_tokens_alias_is_accepted():
+    assert resolve_max_tokens({"KIMI_MAX_TOKENS": "4096"}) == 4096
+
+
 def test_max_tokens_env_exports_all_aliases():
     env = max_tokens_env(DEFAULT_MAX_TOKENS)
     assert env["OPENROUTER_MAX_TOKENS"] == "32768"
+    assert env["KIMI_MAX_TOKENS"] == "32768"
     assert env["KIMI_MODEL_MAX_TOKENS"] == "32768"
     assert env["KIMI_MODEL_MAX_COMPLETION_TOKENS"] == "32768"
     assert env["MIDKERNEL_OPENROUTER_MAX_TOKENS"] == "32768"
@@ -51,10 +67,108 @@ def test_cli_clamp_does_not_copy_context_size():
     assert "131072" not in out
 
 
-def test_sitecustomize_does_not_use_max_context_as_max_tokens(tmp_path):
+def test_sitecustomize_fails_loud_and_does_not_swallow_errors(tmp_path):
     text = sitecustomize_source()
     assert "max_context_size" in text
     assert "cmtufzqzo0003k004mt2w0m9c" in text
+    assert "except Exception" not in text
+    assert "required=True" in text
     path = write_openrouter_sitecustomize(tmp_path)
     assert path.is_file()
-    assert "install_openai_legacy_max_tokens_cap" in path.read_text(encoding="utf-8")
+    written = path.read_text(encoding="utf-8")
+    assert "install_openai_legacy_max_tokens_cap" in written
+    assert "except Exception" not in written
+
+
+def test_install_required_fails_loud_without_openai_legacy(monkeypatch):
+    monkeypatch.setitem(sys.modules, "kosong.contrib.chat_provider.openai_legacy", None)
+    with pytest.raises(OpenRouterMaxTokensCapError, match="131072"):
+        install_openai_legacy_max_tokens_cap(required=True)
+
+
+def _install_fake_openai_legacy():
+    completions_calls: list[dict] = []
+
+    class Completions:
+        async def create(self, **kwargs):
+            completions_calls.append(dict(kwargs))
+            return {"ok": True}
+
+    class Chat:
+        def __init__(self):
+            self.completions = Completions()
+
+    class Client:
+        def __init__(self):
+            self.chat = Chat()
+
+    class OpenAILegacy:
+        def __init__(self, *args, **kwargs):
+            self._generation_kwargs = {}
+            self.client = Client()
+
+        def with_generation_kwargs(self, **kwargs):
+            self._generation_kwargs.update(kwargs)
+            return self
+
+        async def generate(self, *args, **kwargs):
+            generation_kwargs = {}
+            generation_kwargs.update(self._generation_kwargs)
+            return await self.client.chat.completions.create(
+                model="moonshotai/kimi-k3",
+                messages=[],
+                **generation_kwargs,
+            )
+
+    package = types.ModuleType("kosong")
+    contrib = types.ModuleType("kosong.contrib")
+    provider = types.ModuleType("kosong.contrib.chat_provider")
+    legacy = types.ModuleType("kosong.contrib.chat_provider.openai_legacy")
+    legacy.OpenAILegacy = OpenAILegacy
+    sys.modules["kosong"] = package
+    sys.modules["kosong.contrib"] = contrib
+    sys.modules["kosong.contrib.chat_provider"] = provider
+    sys.modules["kosong.contrib.chat_provider.openai_legacy"] = legacy
+    return OpenAILegacy, completions_calls
+
+
+def test_monkeypatch_puts_max_tokens_32768_on_chat_completions_kwargs():
+    """Outbound chat.completions.create must carry max_tokens=32768, never 131072."""
+    OpenAILegacy, calls = _install_fake_openai_legacy()
+    assert install_openai_legacy_max_tokens_cap({}) is True
+    provider = OpenAILegacy(model="moonshotai/kimi-k3")
+    assert provider._generation_kwargs["max_tokens"] == DEFAULT_MAX_TOKENS
+    asyncio.run(provider.generate())
+    assert calls, "chat.completions.create was not invoked"
+    assert calls[0]["max_tokens"] == DEFAULT_MAX_TOKENS
+    assert calls[0]["max_tokens"] != UNSAFE_OPENROUTER_DEFAULT
+
+
+def test_monkeypatch_clamps_131072_on_outbound_kwargs():
+    OpenAILegacy, calls = _install_fake_openai_legacy()
+    assert install_openai_legacy_max_tokens_cap({}) is True
+    provider = OpenAILegacy(model="moonshotai/kimi-k3")
+    provider._generation_kwargs["max_tokens"] = UNSAFE_OPENROUTER_DEFAULT
+    asyncio.run(provider.generate())
+    assert calls[0]["max_tokens"] == DEFAULT_MAX_TOKENS
+
+
+def test_injection_proxy_url_detection():
+    assert is_injection_proxy_url("http://127.0.0.1:54321/api/v1") is True
+    assert is_injection_proxy_url("http://localhost:9/api/v1") is True
+    assert is_injection_proxy_url("https://openrouter.ai/api/v1") is False
+    assert is_injection_proxy_url("") is False
+
+
+def test_resolve_provider_base_url_preserves_localhost_proxy(tmp_path):
+    proxy = "http://127.0.0.1:4242/api/v1"
+    assert (
+        resolve_provider_base_url({"OPENAI_BASE_URL": proxy}) == proxy
+    )
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[providers.openrouter]\nbase_url = "http://127.0.0.1:9999/api/v1"\n',
+        encoding="utf-8",
+    )
+    assert resolve_provider_base_url({}, config_path=config) == "http://127.0.0.1:9999/api/v1"
+    assert resolve_provider_base_url({}) == "https://openrouter.ai/api/v1"
