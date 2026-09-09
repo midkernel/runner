@@ -22,6 +22,7 @@ from midkernel_runner.clone import CloneError
 from midkernel_runner.config import ConfigError, load_config
 from midkernel_runner.graph import GraphError, run_playbooks_graph, should_run_playbooks_graph
 from midkernel_runner.kimi import KimiError, run_kimi
+from midkernel_runner.mode import apply_graph_mode_flags
 from midkernel_runner.node import NodePrepareError, prepare_node
 from midkernel_runner.playbook import PlaybookError, load_playbook_prompt
 from midkernel_runner.report import ReportError
@@ -60,6 +61,10 @@ def run() -> int:
     try:
         use_graph = should_run_playbooks_graph(config)
         if use_graph:
+            # Pin flags before prepare so any BASH_ENV / node-prepare in this
+            # process skips clone-into-/workspace. Entrypoint no longer runs
+            # midkernel-node-prepare on the default CMD path.
+            apply_graph_mode_flags()
             LOG.info(
                 "playbooks graph pipelines/%s.py (in-task node I/O → graph.json)",
                 config.playbook_slug,

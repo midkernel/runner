@@ -47,6 +47,25 @@ def in_graph_mode(environ: dict[str, str] | None = None) -> bool:
     return target in LOCAL_TARGETS
 
 
+def apply_graph_mode_flags(environ: dict[str, str] | None = None) -> dict[str, str]:
+    """Pin graph-mode flags so prepare / BASH_ENV skip target clone + report trap.
+
+    Must run as soon as midkernel-runner chooses the playbooks graph — before
+    ``prepare_node`` and before any later ``bash -c`` sources ``node-env.sh``.
+    ``apply_graph_env`` used to set these only after prepare, which is too
+    late for the image entrypoint (GOAL ``cmtue7rv90003l104ysmh21eu``).
+    """
+    env = os.environ if environ is None else environ
+    env["MIDKERNEL_NODE_IO"] = env.get("MIDKERNEL_NODE_IO") or "1"
+    if not (env.get("MIDKERNEL_AGENTFLOW_TARGET") or "").strip():
+        env["MIDKERNEL_AGENTFLOW_TARGET"] = "local"
+    if not (env.get("MIDKERNEL_CLONE_TARGET") or "").strip():
+        env["MIDKERNEL_CLONE_TARGET"] = "0"
+    if not (env.get("MIDKERNEL_REQUIRE_REPORT") or "").strip():
+        env["MIDKERNEL_REQUIRE_REPORT"] = "0"
+    return env
+
+
 def should_clone_target(environ: dict[str, str] | None = None) -> bool:
     """Whether ``midkernel-node-prepare`` should clone GITHUB_* into WORKDIR.
 
@@ -54,6 +73,10 @@ def should_clone_target(environ: dict[str, str] | None = None) -> bool:
     into ``$WORKDIR`` fails once ``.midkernel/playbooks`` exists
     (``Clone destination is not empty``) and BASH_ENV then ``exit 1``
     before the first node's wrap can upload output/meta.
+
+    Default CMD no longer calls this CLI (entrypoint skips node-env).
+    Graph mode / ``MIDKERNEL_CLONE_TARGET=0`` must still skip clone even
+    when ``$WORKDIR`` is already non-empty.
     """
     flag = env_flag(environ, "MIDKERNEL_CLONE_TARGET")
     if flag is not None:
