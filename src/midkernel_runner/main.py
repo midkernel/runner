@@ -1,9 +1,14 @@
-"""Midkernel scan helper: secrets → clone → Kimi → report.md → S3.
+"""Midkernel scan helper.
 
-The default image CMD is ``midkernel-default`` (Kimi scan helper when
-``RUN_ID`` is set, otherwise ``agentflow --help``). Native agentflow
-launches ``kimi`` via ``bash -c``; ``BASH_ENV`` + the ``kimi`` wrapper
-still prepare OpenRouter and publish.
+Default image CMD is ``midkernel-default`` → this module when ``RUN_ID``
+is set. Native agentflow per-node launch still uses ``bash -c`` + PATH
+``kimi``; ``BASH_ENV`` + the kimi wrapper prepare OpenRouter and publish.
+
+When midkernel/playbooks publishes ``pipelines/<slug>.py``, run that graph
+in-task (``MIDKERNEL_AGENTFLOW_TARGET=local``) so ``_node_io.py`` uploads
+``graph.json`` + ``nodes/*`` next to ``report.md``. The old single-kimi +
+``<slug>.md`` path is the fallback when no pipeline file exists (or
+``MIDKERNEL_FORCE_MD_KIMI=1``).
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ from pathlib import Path
 from midkernel_runner.artifacts import ArtifactError, upload_report
 from midkernel_runner.clone import CloneError
 from midkernel_runner.config import ConfigError, load_config
+from midkernel_runner.graph import GraphError, run_playbooks_graph, should_run_playbooks_graph
 from midkernel_runner.kimi import KimiError, run_kimi
 from midkernel_runner.node import NodePrepareError, prepare_node
 from midkernel_runner.playbook import PlaybookError, load_playbook_prompt
@@ -52,6 +58,28 @@ def run() -> int:
     LOG.info("artifacts dest %s", config.s3_uri)
 
     try:
+        use_graph = should_run_playbooks_graph(config)
+        if use_graph:
+            LOG.info(
+                "playbooks graph pipelines/%s.py (in-task node I/O → graph.json)",
+                config.playbook_slug,
+            )
+            prepared = prepare_node(clone_target=False)
+            if prepared.secrets is None:
+                raise NodePrepareError("harness secrets were not loaded")
+            LOG.info("prepared node (kimi OpenRouter + task-role secrets; values not logged)")
+            try:
+                return run_playbooks_graph(config)
+            except GraphError as exc:
+                # Confirmed-missing pipelines stay on md+kimi. An unknown probe
+                # still tries the graph; if the clone has no pipelines/<slug>.py,
+                # fall back instead of failing a markdown-only playbook.
+                detail = str(exc)
+                if "cloned playbooks missing" in detail:
+                    LOG.warning("playbooks graph unavailable, md+kimi fallback: %s", detail)
+                else:
+                    raise
+
         prepared = prepare_node()
         if prepared.secrets is None:
             raise NodePrepareError("harness secrets were not loaded")
@@ -71,6 +99,7 @@ def run() -> int:
         KimiError,
         ReportError,
         ArtifactError,
+        GraphError,
     ) as exc:
         LOG.error("run failed: %s", exc)
         return 1
