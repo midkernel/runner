@@ -20,11 +20,20 @@ def test_optional_context_present():
 def test_prepare_node_writes_kimi_config_from_env(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("KIMI_API_KEY", "sk-or-v1-from-agentflow")
-    prepared = prepare_node(environ=dict(**{"KIMI_API_KEY": "sk-or-v1-from-agentflow", "HOME": str(tmp_path)}))
+    work = tmp_path / "workspace"
+    prepared = prepare_node(
+        environ={
+            "KIMI_API_KEY": "sk-or-v1-from-agentflow",
+            "HOME": str(tmp_path),
+            "WORKDIR": str(work),
+        }
+    )
     assert prepared.kimi_config_path is not None
     text = prepared.kimi_config_path.read_text(encoding="utf-8")
     assert "openai_legacy" in text
     assert "openrouter.ai" in text
+    assert prepared.kimi_config_path == work / ".midkernel" / "kimi" / "config.toml"
+    assert (tmp_path / ".kimi" / "config.toml").is_file()
 
 
 def test_prepare_node_clone_target_false_injects_secrets(tmp_path, monkeypatch):
@@ -61,6 +70,10 @@ def test_prepare_node_clone_target_false_injects_secrets(tmp_path, monkeypatch):
     assert os.environ["GITHUB_TOKEN"] == "ghs_from_app"
     assert os.environ["OPENROUTER_API_KEY"] == "sk-or-v1-graph"
     assert os.environ["OPENAI_API_KEY"] == "sk-or-v1-graph"
+    assert os.environ["KIMI_BASE_URL"] == "https://openrouter.ai/api/v1"
+    assert os.environ["KIMI_MODEL_NAME"] == "moonshotai/kimi-k3"
+    assert os.environ["KIMI_SHARE_DIR"] == str(work / ".midkernel" / "kimi")
+    assert prepared.kimi_config_path == work / ".midkernel" / "kimi" / "config.toml"
 
 
 def test_prepare_node_honors_clone_target_env(tmp_path, monkeypatch):

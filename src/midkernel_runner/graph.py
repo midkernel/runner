@@ -20,6 +20,11 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from midkernel_runner.config import RunConfig
+from midkernel_runner.kimi import (
+    export_kimi_openrouter_env,
+    graph_kimi_share_dir,
+    write_kimi_openrouter_config,
+)
 from midkernel_runner.mode import IMAGE_KIMI_BIN
 
 LOG = logging.getLogger("midkernel.graph")
@@ -150,6 +155,23 @@ def apply_graph_env(config: RunConfig, environ: dict[str, str] | None = None) ->
     current_path = env.get("PATH") or os.environ.get("PATH") or ""
     parts = [part for part in current_path.split(os.pathsep) if part and part != shim_dir]
     env["PATH"] = os.pathsep.join([shim_dir, *parts])
+    # Playbooks ecs-in-task / _node_io set BASH_ENV=/dev/null and exec
+    # kimi.bin. Secrets loaded by prepare_node must stay visible as both
+    # env vars (dummy type=kimi fallback) and KIMI_SHARE_DIR/config.toml
+    # (openai_legacy when --config is absent or HOME was overwritten).
+    share = graph_kimi_share_dir(config.workdir)
+    env["KIMI_SHARE_DIR"] = str(share)
+    api_key = (
+        env.get("OPENROUTER_API_KEY") or env.get("OPENAI_API_KEY") or env.get("KIMI_API_KEY") or ""
+    ).strip()
+    if api_key:
+        model = (
+            env.get("OPENROUTER_MODEL") or env.get("MODEL") or config.openrouter_model
+        ).strip()
+        env.update(
+            export_kimi_openrouter_env(env, api_key, model=model, share_dir=share)
+        )
+        write_kimi_openrouter_config(api_key, model, share_dir=share)
     return env
 
 
