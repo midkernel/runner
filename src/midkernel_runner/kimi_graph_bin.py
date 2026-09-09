@@ -1,8 +1,8 @@
 """Front for in-task ``kimi.bin`` so playbooks ``--config`` cannot drop the LLM.
 
 Playbooks ``_node_io.wrap_kimi`` execs ``MIDKERNEL_KIMI_BIN`` with agentflow
-argv. That includes ``--model moonshotai/kimi-k3`` (or judge-b's OpenRouter
-slug) plus ``--config`` TOML that only defines ``models.midkernel``.
+argv. That includes ``--model google/gemini-3.8-flash`` (or judge-b's
+OpenRouter slug) plus ``--config`` TOML that only defines ``models.midkernel``.
 kimi-cli 1.49 then builds an empty ``type=kimi`` provider and prints
 ``LLM not set`` (GOAL ``cmtudm8f20003i90462yr3vxq`` threat-model,
 security-review ``cmtudf0470003jp040742shv6`` review).

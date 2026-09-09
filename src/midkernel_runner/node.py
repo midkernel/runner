@@ -19,6 +19,7 @@ from pathlib import Path
 from midkernel_runner.clone import CloneError, clone_repository
 from midkernel_runner.config import ConfigError, RunConfig, load_config, load_optional_run_context
 from midkernel_runner.kimi import (
+    DEFAULT_OPENROUTER_SLUG,
     export_kimi_openrouter_env,
     graph_kimi_share_dir,
     write_kimi_openrouter_config,
@@ -94,7 +95,7 @@ def prepare_node(
         )
 
     if secrets and secrets.openrouter_api_key:
-        model = (env.get("OPENROUTER_MODEL") or env.get("MODEL") or "moonshotai/kimi-k3").strip()
+        model = (env.get("OPENROUTER_MODEL") or env.get("MODEL") or DEFAULT_OPENROUTER_SLUG).strip()
         home = Path(env.get("HOME") or os.environ.get("HOME") or "/home/agent")
         workdir = (config.workdir if config is not None else None) or env.get("WORKDIR") or "/workspace"
         share = graph_kimi_share_dir(workdir)

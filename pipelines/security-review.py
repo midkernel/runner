@@ -32,7 +32,7 @@ with Graph("midkernel-security-review", working_dir=".") as g:
             "Write the full review to /outputs/report.md including a "
             "`Findings: N` line."
         ),
-        model="moonshotai/kimi-k3",
+        model="google/gemini-3.8-flash",
         tools="read_only",
         target=ECS_TARGET,
     )
