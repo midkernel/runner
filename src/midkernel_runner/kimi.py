@@ -23,6 +23,14 @@ import subprocess
 from pathlib import Path
 
 from midkernel_runner.config import RunConfig
+from midkernel_runner.openrouter_tokens import (
+    clamp_max_tokens,
+    max_tokens_env,
+    prepend_pythonpath,
+    resolve_max_tokens,
+    sitecustomize_dir,
+    write_openrouter_sitecustomize,
+)
 from midkernel_runner.report import ReportError, persist_report, validate_report
 from midkernel_runner.secrets import HarnessSecrets
 
@@ -70,10 +78,17 @@ def graph_kimi_share_dir(workdir: str | Path) -> Path:
     return Path(workdir) / ".midkernel" / "kimi"
 
 
-def render_kimi_openrouter_config(api_key: str, model: str) -> str:
+def render_kimi_openrouter_config(
+    api_key: str,
+    model: str,
+    *,
+    max_tokens: int | None = None,
+    environ: dict[str, str] | None = None,
+) -> str:
     slug = openrouter_slug(model)
     aliases = kimi_model_aliases(model)
     default_model = aliases[0]
+    cap = resolve_max_tokens(environ) if max_tokens is None else clamp_max_tokens(max_tokens)
     lines = [
         f'default_model = "{default_model}"',
         "default_yolo = true",
@@ -92,6 +107,10 @@ def render_kimi_openrouter_config(api_key: str, model: str) -> str:
                 'provider = "openrouter"',
                 f'model = "{slug}"',
                 f"max_context_size = {DEFAULT_CONTEXT}",
+                # Completion budget only. Never copy max_context_size here —
+                # OpenRouter 402 in_flight_budget_exhausted on 131072
+                # (GOAL cmtufzqzo0003k004mt2w0m9c).
+                f"max_tokens = {cap}",
                 "",
             ]
         )
@@ -116,11 +135,18 @@ def write_kimi_openrouter_config(
     *,
     home: Path | None = None,
     share_dir: Path | None = None,
+    max_tokens: int | None = None,
+    environ: dict[str, str] | None = None,
 ) -> Path:
     path = kimi_config_path(home, share_dir=share_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_kimi_openrouter_config(api_key, model), encoding="utf-8")
+    path.write_text(
+        render_kimi_openrouter_config(api_key, model, max_tokens=max_tokens, environ=environ),
+        encoding="utf-8",
+    )
     path.chmod(0o600)
+    hook_root = share_dir if share_dir is not None else path.parent
+    write_openrouter_sitecustomize(hook_root)
     return path
 
 
@@ -151,8 +177,13 @@ def export_kimi_openrouter_env(
     out["KIMI_BASE_URL"] = OPENROUTER_BASE_URL
     out["KIMI_MODEL_NAME"] = slug
     out.setdefault("OPENROUTER_MODEL", slug)
+    cap = resolve_max_tokens(out)
+    out.update(max_tokens_env(cap))
     if share_dir is not None:
-        out["KIMI_SHARE_DIR"] = str(share_dir)
+        share = Path(share_dir)
+        out["KIMI_SHARE_DIR"] = str(share)
+        write_openrouter_sitecustomize(share)
+        prepend_pythonpath(out, sitecustomize_dir(share))
     out.pop("AI_GATEWAY_API_KEY", None)
     out.pop("VERCEL_OIDC_TOKEN", None)
     out.pop("AWS_BEDROCK_REGION", None)
