@@ -199,7 +199,7 @@ def apply_graph_env(config: RunConfig, environ: dict[str, str] | None = None) ->
         env.update(
             export_kimi_openrouter_env(env, api_key, model=model, share_dir=share)
         )
-        write_kimi_openrouter_config(api_key, model, share_dir=share)
+        write_kimi_openrouter_config(api_key, model, share_dir=share, environ=env)
     return env
 
 

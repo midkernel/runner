@@ -48,7 +48,7 @@ def apply_openrouter_env(
     share_dir: Path | None = None,
 ) -> None:
     for key, value in export_kimi_openrouter_env(
-        {}, api_key, model=model, share_dir=share_dir
+        dict(os.environ), api_key, model=model, share_dir=share_dir
     ).items():
         os.environ[key] = value
 
@@ -101,9 +101,11 @@ def prepare_node(
         # WORKDIR share dir is what in-task kimi.bin reads (KIMI_SHARE_DIR).
         # Also write ~/.kimi for BASH_ENV / PATH wrapper / single-kimi.
         kimi_path = write_kimi_openrouter_config(
-            secrets.openrouter_api_key, model, share_dir=share
+            secrets.openrouter_api_key, model, share_dir=share, environ=env
         )
-        write_kimi_openrouter_config(secrets.openrouter_api_key, model, home=home)
+        write_kimi_openrouter_config(
+            secrets.openrouter_api_key, model, home=home, environ=env
+        )
         apply_openrouter_env(secrets.openrouter_api_key, model=model, share_dir=share)
         if secrets.github_token:
             os.environ["GITHUB_TOKEN"] = secrets.github_token
