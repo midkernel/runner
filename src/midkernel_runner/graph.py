@@ -37,6 +37,13 @@ BIN="${{MIDKERNEL_KIMI_BIN:-{kimi_bin}}}"
 exec "$BIN" "$@"
 """
 
+# playbooks _node_io.wrap_kimi execs MIDKERNEL_KIMI_BIN (not PATH). This
+# front rewrites --config so kimi.bin loads the OpenRouter file.
+# Do not mention KIMI_REAL_BIN / midkernel-publish-report (is_report_md_wrapper).
+GRAPH_KIMI_FRONT = """#!/bin/sh
+exec python3 -m midkernel_runner.kimi_graph_bin "$@"
+"""
+
 # agentflow doctor kimi_ready: `[executable, "--version"]` in the prepared
 # local shell. Playbooks sets executable to pipelines/_node_io.py, which
 # (until playbooks handles it) fell through to wrap_kimi and failed ×12.
@@ -129,6 +136,20 @@ def install_graph_kimi_shim(config: RunConfig, kimi_bin: str) -> Path:
     return shim
 
 
+def graph_kimi_front_path(config: RunConfig) -> Path:
+    return graph_kimi_shim_dir(config) / "kimi-openrouter"
+
+
+def install_graph_kimi_front(config: RunConfig) -> Path:
+    """``MIDKERNEL_KIMI_BIN`` target: rewrite playbooks ``--config``, exec kimi.bin."""
+    directory = graph_kimi_shim_dir(config)
+    directory.mkdir(parents=True, exist_ok=True)
+    front = graph_kimi_front_path(config)
+    front.write_text(GRAPH_KIMI_FRONT, encoding="utf-8")
+    front.chmod(0o755)
+    return front
+
+
 def apply_graph_env(config: RunConfig, environ: dict[str, str] | None = None) -> dict[str, str]:
     """Export the playbooks node-I/O contract onto the process env.
 
@@ -145,11 +166,23 @@ def apply_graph_env(config: RunConfig, environ: dict[str, str] | None = None) ->
         env["MIDKERNEL_CLONE_TARGET"] = "0"
     if not (env.get("MIDKERNEL_REQUIRE_REPORT") or "").strip():
         env["MIDKERNEL_REQUIRE_REPORT"] = "0"
-    if not (env.get("MIDKERNEL_KIMI_BIN") or "").strip():
-        env["MIDKERNEL_KIMI_BIN"] = IMAGE_KIMI_BIN
+    pinned = (env.get("MIDKERNEL_KIMI_BIN") or "").strip()
+    already_front = pinned.endswith("kimi-openrouter") or "kimi_graph_bin" in pinned
+    if already_front:
+        env["MIDKERNEL_GRAPH_KIMI_BIN"] = (
+            (env.get("MIDKERNEL_GRAPH_KIMI_BIN") or "").strip() or IMAGE_KIMI_BIN
+        )
+    elif pinned and pinned != IMAGE_KIMI_BIN:
+        env["MIDKERNEL_GRAPH_KIMI_BIN"] = pinned
+    else:
+        env["MIDKERNEL_GRAPH_KIMI_BIN"] = (
+            (env.get("MIDKERNEL_GRAPH_KIMI_BIN") or "").strip() or IMAGE_KIMI_BIN
+        )
     Path(config.workdir).mkdir(parents=True, exist_ok=True)
     Path(config.outputs_dir).mkdir(parents=True, exist_ok=True)
     (Path(config.workdir) / ".midkernel").mkdir(parents=True, exist_ok=True)
+    front = install_graph_kimi_front(config)
+    env["MIDKERNEL_KIMI_BIN"] = str(front)
     shim = install_graph_kimi_shim(config, env["MIDKERNEL_KIMI_BIN"])
     shim_dir = str(shim.parent)
     current_path = env.get("PATH") or os.environ.get("PATH") or ""

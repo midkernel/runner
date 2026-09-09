@@ -22,6 +22,7 @@ _GRAPH_ENV_KEYS = (
     "MIDKERNEL_NODE_IO",
     "MIDKERNEL_AGENTFLOW_TARGET",
     "MIDKERNEL_KIMI_BIN",
+    "MIDKERNEL_GRAPH_KIMI_BIN",
     "MIDKERNEL_CLONE_TARGET",
     "MIDKERNEL_REQUIRE_REPORT",
     "KIMI_SHARE_DIR",
@@ -97,15 +98,22 @@ def test_apply_graph_env_exports_contract(tmp_path, monkeypatch):
     assert env["WORKDIR"] == str(tmp_path / "ws")
     assert env["MIDKERNEL_NODE_IO"] == "1"
     assert env["MIDKERNEL_AGENTFLOW_TARGET"] == "local"
-    assert env["MIDKERNEL_KIMI_BIN"] == "/opt/midkernel/kimi.bin"
+    assert env["MIDKERNEL_GRAPH_KIMI_BIN"] == "/opt/midkernel/kimi.bin"
+    assert env["MIDKERNEL_KIMI_BIN"] == str(tmp_path / "ws" / ".midkernel" / "bin" / "kimi-openrouter")
     assert env["MIDKERNEL_CLONE_TARGET"] == "0"
     assert env["MIDKERNEL_REQUIRE_REPORT"] == "0"
     assert (tmp_path / "ws" / ".midkernel").is_dir()
+    front = tmp_path / "ws" / ".midkernel" / "bin" / "kimi-openrouter"
+    assert front.is_file()
+    front_text = front.read_text(encoding="utf-8")
+    assert "kimi_graph_bin" in front_text
+    assert "KIMI_REAL_BIN" not in front_text
+    assert "midkernel-publish-report" not in front_text
     shim = tmp_path / "ws" / ".midkernel" / "bin" / "kimi"
     assert shim.is_file()
     assert oct(shim.stat().st_mode)[-3:] == "755"
     text = shim.read_text(encoding="utf-8")
-    assert "/opt/midkernel/kimi.bin" in text
+    assert "kimi-openrouter" in text
     assert "/usr/local/bin/kimi" not in text or "Never fall through" in text
     assert env["PATH"].split(os.pathsep)[0] == str(shim.parent)
     assert env["KIMI_SHARE_DIR"] == str(tmp_path / "ws" / ".midkernel" / "kimi")
@@ -136,6 +144,8 @@ def test_apply_graph_env_exports_openrouter_for_kimi_bin(tmp_path):
     assert "openai_legacy" in text
     assert "midkernel" in text
     assert "moonshotai/kimi-k3" in text
+    assert env["MIDKERNEL_KIMI_BIN"].endswith("kimi-openrouter")
+    assert env["MIDKERNEL_GRAPH_KIMI_BIN"] == "/opt/midkernel/kimi.bin"
 
 
 def test_apply_graph_env_path_shim_beats_wrapper(tmp_path):
@@ -187,7 +197,10 @@ def test_run_playbooks_graph_invokes_agentflow(tmp_path, monkeypatch):
     assert seen["cmd"][1] == "run"
     assert seen["cmd"][2].endswith("goal-security-review.py")
     assert seen["cwd"] == str(playbooks)
-    assert seen["env"].get("MIDKERNEL_KIMI_BIN") == "/opt/midkernel/kimi.bin"
+    assert seen["env"].get("MIDKERNEL_GRAPH_KIMI_BIN") == "/opt/midkernel/kimi.bin"
+    assert seen["env"].get("MIDKERNEL_KIMI_BIN") == str(
+        tmp_path / "ws" / ".midkernel" / "bin" / "kimi-openrouter"
+    )
     assert seen["env"].get("MIDKERNEL_CLONE_TARGET") == "0"
     assert seen["env"].get("MIDKERNEL_REQUIRE_REPORT") == "0"
     assert seen["env"].get("MIDKERNEL_AGENTFLOW_TARGET") == "local"
