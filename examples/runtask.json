@@ -25,7 +25,7 @@
           { "name": "GITHUB_NAME", "value": "REPLACE_REPO" },
           { "name": "PLAYBOOK", "value": "security-review" },
           { "name": "PROFILE", "value": "low" },
-          { "name": "MODEL", "value": "moonshotai/kimi-k3" },
+          { "name": "MODEL", "value": "google/gemini-3.8-flash" },
           { "name": "GITHUB_TOKEN", "value": "optional-per-run-installation-token" }
         ]
       }

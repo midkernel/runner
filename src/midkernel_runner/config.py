@@ -16,9 +16,10 @@ DEFAULT_PLAYBOOKS_OWNER = "midkernel"
 DEFAULT_PLAYBOOKS_NAME = "playbooks"
 DEFAULT_PLAYBOOKS_REF = "main"
 
-# OpenRouter vendor/model slug (app + playbooks). Kimi CLI config aliases also
-# accept openrouter/<slug> when agentflow passes that as --model.
-DEFAULT_OPENROUTER_MODEL = "moonshotai/kimi-k3"
+# OpenRouter vendor/model slug (app + playbooks). Matches Pareto `balanced`.
+# Kimi CLI config aliases also accept openrouter/<slug> when agentflow
+# passes that as --model. Override with OPENROUTER_MODEL or MODEL.
+DEFAULT_OPENROUTER_MODEL = "google/gemini-3.8-flash"
 
 DEFAULT_OPENROUTER_SECRET = "midkernel/dev/harness/openrouter-api-key"
 DEFAULT_GITHUB_SECRET = "midkernel/dev/harness/github-token"
@@ -164,7 +165,7 @@ def load_config(environ: dict[str, str] | None = None) -> RunConfig:
     prefix = _optional("ARTIFACTS_PREFIX", env, DEFAULT_PREFIX) or DEFAULT_PREFIX
     model = _first(env, "OPENROUTER_MODEL", "MODEL", default=DEFAULT_OPENROUTER_MODEL) or DEFAULT_OPENROUTER_MODEL
     if "/" not in model:
-        raise ConfigError("OPENROUTER_MODEL must be vendor/model (e.g. moonshotai/kimi-k3)")
+        raise ConfigError("OPENROUTER_MODEL must be vendor/model (e.g. google/gemini-3.8-flash)")
 
     timeout = int(_optional("AGENT_TIMEOUT_SECONDS", env, str(PROFILE_TIMEOUT_SECONDS[profile])) or PROFILE_TIMEOUT_SECONDS[profile])
 

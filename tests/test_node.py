@@ -71,7 +71,7 @@ def test_prepare_node_clone_target_false_injects_secrets(tmp_path, monkeypatch):
     assert os.environ["OPENROUTER_API_KEY"] == "sk-or-v1-graph"
     assert os.environ["OPENAI_API_KEY"] == "sk-or-v1-graph"
     assert os.environ["KIMI_BASE_URL"] == "https://openrouter.ai/api/v1"
-    assert os.environ["KIMI_MODEL_NAME"] == "moonshotai/kimi-k3"
+    assert os.environ["KIMI_MODEL_NAME"] == "google/gemini-3.8-flash"
     assert os.environ["KIMI_SHARE_DIR"] == str(work / ".midkernel" / "kimi")
     assert prepared.kimi_config_path == work / ".midkernel" / "kimi" / "config.toml"
 

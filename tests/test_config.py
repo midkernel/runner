@@ -19,7 +19,7 @@ def test_defaults():
     assert cfg.artifacts_bucket == "midkernel-dev-artifacts"
     assert cfg.artifact_key == "runs/run_abc-1/report.md"
     assert cfg.s3_uri == "s3://midkernel-dev-artifacts/runs/run_abc-1/report.md"
-    assert cfg.openrouter_model == "moonshotai/kimi-k3"
+    assert cfg.openrouter_model == "google/gemini-3.8-flash"
     assert cfg.openrouter_secret_id == "midkernel/dev/harness/openrouter-api-key"
     assert cfg.github_secret_id == "midkernel/dev/harness/github-token"
 
@@ -66,6 +66,13 @@ def test_app_env_aliases():
     assert cfg.threat_pin == "runtime"
     assert cfg.openrouter_model == "moonshotai/kimi-k3"
     assert cfg.artifact_key == "runs/run_abc-1/report.md"
+
+
+def test_openrouter_model_env_overrides_default():
+    cfg = load_config(_base(OPENROUTER_MODEL="moonshotai/kimi-k3"))
+    assert cfg.openrouter_model == "moonshotai/kimi-k3"
+    cfg = load_config(_base(MODEL="anthropic/claude-sonnet-4.6"))
+    assert cfg.openrouter_model == "anthropic/claude-sonnet-4.6"
 
 
 def test_optional_run_context():

@@ -29,7 +29,7 @@ Hard lock is **OpenRouter**. Preferred harness is **Kimi CLI 1.49.0** (same pin 
 | `OPENROUTER_API_KEY` | Midkernel / app contract |
 | `KIMI_API_KEY` / `MOONSHOT_API_KEY` | agentflow `agent_auth_setup` for `kimi` |
 
-Default model: `moonshotai/kimi-k3` (app `SCAN_MODEL_BY_PROFILE`). Config aliases also accept `kimi-k3` and `openrouter/moonshotai/kimi-k3` so agentflow `--model` resolves.
+Default model: `google/gemini-3.8-flash` (Pareto `balanced` / app `SCAN_MODEL_BY_PROFILE`). Override with `OPENROUTER_MODEL` or `MODEL`. Config aliases also accept `kimi-k3`, the env slug, and `openrouter/<slug>` so agentflow `--model` resolves.
 
 Fargate tasks are unprivileged. This image does **not** copy agentflow's DinD Dockerfile.
 
@@ -46,7 +46,7 @@ with Graph("midkernel-security-review", working_dir=".") as g:
     kimi(
         task_id="security-review",
         prompt="Perform a /security-review on this project. Write /outputs/report.md.",
-        model="moonshotai/kimi-k3",
+        model="google/gemini-3.8-flash",
         target={
             "kind": "ecs",
             "region": "us-east-1",
@@ -87,7 +87,7 @@ Uploaded via the task role (`s3:PutObject`, SSE-S3). Helpers:
 - `midkernel-publish-report` — find + validate + upload (md+kimi fallback)
 - `scripts/ecs-in-task.sh` on playbooks — `agentflow run pipelines/${PLAYBOOK}.py`
 - `kimi` PATH wrapper — prepare OpenRouter, run real kimi, then publish `report.md` only for single-kimi / per-node ECS (`RUN_ID` set and not `MIDKERNEL_AGENTFLOW_TARGET=local`)
-- In-task graphs: `apply_graph_env` exports `MIDKERNEL_CLONE_TARGET=0`, `MIDKERNEL_REQUIRE_REPORT=0`, prepends `$WORKDIR/.midkernel/bin/kimi`, and points **`MIDKERNEL_KIMI_BIN` at `$WORKDIR/.midkernel/bin/kimi-openrouter`** (playbooks `_node_io` execs that, not PATH). The front drops playbooks `--config` (only `models.midkernel`) and injects `--config-file $KIMI_SHARE_DIR/config.toml` with aliases for `midkernel` **and** the node's `--model` (review / threat-model `moonshotai/kimi-k3`, judge-b, hunters). Real binary is `MIDKERNEL_GRAPH_KIMI_BIN=/opt/midkernel/kimi.bin`. Also re-exports:
+- In-task graphs: `apply_graph_env` exports `MIDKERNEL_CLONE_TARGET=0`, `MIDKERNEL_REQUIRE_REPORT=0`, prepends `$WORKDIR/.midkernel/bin/kimi`, and points **`MIDKERNEL_KIMI_BIN` at `$WORKDIR/.midkernel/bin/kimi-openrouter`** (playbooks `_node_io` execs that, not PATH). The front drops playbooks `--config` (only `models.midkernel`) and injects `--config-file $KIMI_SHARE_DIR/config.toml` with aliases for `midkernel` **and** the node's `--model` (review / threat-model default `google/gemini-3.8-flash`, judge-b, hunters). Real binary is `MIDKERNEL_GRAPH_KIMI_BIN=/opt/midkernel/kimi.bin`. Also re-exports:
   - `KIMI_SHARE_DIR=$WORKDIR/.midkernel/kimi` + OpenRouter `config.toml`
   - `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENROUTER_API_KEY` (`openai_legacy`)
   - `KIMI_API_KEY` / `KIMI_BASE_URL` / `KIMI_MODEL_NAME` (kimi-cli 1.49 dummy `type=kimi` fallback if `--config` still misses)
@@ -132,7 +132,7 @@ Aligned with `midkernel/app` `src/lib/agentflow-contract.ts`. App names and runn
 | `ARTIFACTS_BUCKET` | no | — | default `midkernel-dev-artifacts` |
 | `ARTIFACTS_PREFIX` | no | — | default `runs/` |
 | `ARTIFACTS_KEY` | no | — | exact S3 key if the app sets it |
-| `OPENROUTER_MODEL` | no | `MODEL` | default `moonshotai/kimi-k3` |
+| `OPENROUTER_MODEL` | no | `MODEL` | default `google/gemini-3.8-flash` (Pareto `balanced`) |
 | `OPENROUTER_MAX_TOKENS` | no | first-wins: `MIDKERNEL_OPENROUTER_MAX_TOKENS`, `OPENROUTER_MAX_TOKENS`, `KIMI_MAX_TOKENS`, `KIMI_MODEL_MAX_TOKENS`, `KIMI_MODEL_MAX_COMPLETION_TOKENS` | in-task default **16384**, hard allowed max **65536**; `>65536` or `>=131072` → 16384 (not `min(value, 65536)`) |
 | `AWS_REGION` | no | — | default `us-east-1` |
 | `OPENROUTER_SECRET_ID` | no | — | `midkernel/dev/harness/openrouter-api-key` |
