@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,27 @@ from midkernel_runner.graph import (
     run_playbooks_graph,
     should_run_playbooks_graph,
 )
+
+
+_GRAPH_ENV_KEYS = (
+    "WORKDIR",
+    "OUTPUTS_DIR",
+    "PATH",
+    "MIDKERNEL_NODE_IO",
+    "MIDKERNEL_AGENTFLOW_TARGET",
+    "MIDKERNEL_KIMI_BIN",
+    "MIDKERNEL_CLONE_TARGET",
+    "MIDKERNEL_REQUIRE_REPORT",
+)
+
+
+def _isolate_os_graph_env(monkeypatch):
+    """run_playbooks_graph writes apply_graph_env onto os.environ."""
+    for key in _GRAPH_ENV_KEYS:
+        if key in os.environ:
+            monkeypatch.setenv(key, os.environ[key])
+        else:
+            monkeypatch.delenv(key, raising=False)
 
 
 def _cfg(**overrides):
@@ -66,10 +88,39 @@ def test_apply_graph_env_exports_contract(tmp_path, monkeypatch):
     assert env["WORKDIR"] == str(tmp_path / "ws")
     assert env["MIDKERNEL_NODE_IO"] == "1"
     assert env["MIDKERNEL_AGENTFLOW_TARGET"] == "local"
+    assert env["MIDKERNEL_KIMI_BIN"] == "/opt/midkernel/kimi.bin"
+    assert env["MIDKERNEL_CLONE_TARGET"] == "0"
+    assert env["MIDKERNEL_REQUIRE_REPORT"] == "0"
     assert (tmp_path / "ws" / ".midkernel").is_dir()
+    shim = tmp_path / "ws" / ".midkernel" / "bin" / "kimi"
+    assert shim.is_file()
+    assert oct(shim.stat().st_mode)[-3:] == "755"
+    text = shim.read_text(encoding="utf-8")
+    assert "/opt/midkernel/kimi.bin" in text
+    assert "/usr/local/bin/kimi" not in text or "Never fall through" in text
+    assert env["PATH"].split(os.pathsep)[0] == str(shim.parent)
 
 
-def test_run_playbooks_graph_invokes_agentflow(tmp_path):
+def test_apply_graph_env_path_shim_beats_wrapper(tmp_path):
+    """agentflow `kimi` on PATH must not resolve to the report wrapper."""
+    cfg = _cfg(WORKDIR=str(tmp_path / "ws"), OUTPUTS_DIR=str(tmp_path / "out"))
+    wrapper_dir = tmp_path / "image-bin"
+    wrapper_dir.mkdir()
+    wrapper = wrapper_dir / "kimi"
+    wrapper.write_text("#!/bin/sh\necho WRAPPER\nexit 1\n")
+    wrapper.chmod(0o755)
+    env = apply_graph_env(
+        cfg,
+        environ={"PATH": str(wrapper_dir)},
+    )
+    first = Path(env["PATH"].split(os.pathsep)[0]) / "kimi"
+    assert first.resolve() != wrapper.resolve()
+    assert first.is_file()
+    assert "MIDKERNEL_KIMI_BIN" in first.read_text(encoding="utf-8")
+
+
+def test_run_playbooks_graph_invokes_agentflow(tmp_path, monkeypatch):
+    _isolate_os_graph_env(monkeypatch)
     playbooks = tmp_path / "playbooks"
     (playbooks / "pipelines").mkdir(parents=True)
     (playbooks / "pipelines" / "goal-security-review.py").write_text("print('ok')\n")
@@ -81,6 +132,7 @@ def test_run_playbooks_graph_invokes_agentflow(tmp_path):
     def fake_run(cmd, **kwargs):
         seen["cmd"] = cmd
         seen["cwd"] = kwargs.get("cwd")
+        seen["env"] = kwargs.get("env") or {}
 
         class Result:
             returncode = 0
@@ -98,9 +150,16 @@ def test_run_playbooks_graph_invokes_agentflow(tmp_path):
     assert seen["cmd"][1] == "run"
     assert seen["cmd"][2].endswith("goal-security-review.py")
     assert seen["cwd"] == str(playbooks)
+    assert seen["env"].get("MIDKERNEL_KIMI_BIN") == "/opt/midkernel/kimi.bin"
+    assert seen["env"].get("MIDKERNEL_CLONE_TARGET") == "0"
+    assert seen["env"].get("MIDKERNEL_REQUIRE_REPORT") == "0"
+    assert seen["env"].get("MIDKERNEL_AGENTFLOW_TARGET") == "local"
+    shim_dir = str(tmp_path / "ws" / ".midkernel" / "bin")
+    assert seen["env"]["PATH"].split(os.pathsep)[0] == shim_dir
 
 
-def test_run_playbooks_graph_prefers_ecs_in_task(tmp_path):
+def test_run_playbooks_graph_prefers_ecs_in_task(tmp_path, monkeypatch):
+    _isolate_os_graph_env(monkeypatch)
     playbooks = tmp_path / "playbooks"
     (playbooks / "pipelines").mkdir(parents=True)
     (playbooks / "pipelines" / "goal-security-review.py").write_text("print('ok')\n")

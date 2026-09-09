@@ -86,8 +86,9 @@ Uploaded via the task role (`s3:PutObject`, SSE-S3). Helpers:
 
 - `midkernel-publish-report` — find + validate + upload (md+kimi fallback)
 - `scripts/ecs-in-task.sh` on playbooks — `agentflow run pipelines/${PLAYBOOK}.py`
-- `kimi` PATH wrapper — prepare OpenRouter, run real kimi, then publish if `RUN_ID` is set (graph nodes must use `/opt/midkernel/kimi.bin` so this wrapper does not require `report.md` after every hunter)
-- `BASH_ENV=/opt/midkernel/node-env.sh` — same prepare when agentflow uses `bash -c`
+- `kimi` PATH wrapper — prepare OpenRouter, run real kimi, then publish `report.md` only for single-kimi / per-node ECS (`RUN_ID` set and not `MIDKERNEL_AGENTFLOW_TARGET=local`)
+- In-task graphs: `apply_graph_env` exports `MIDKERNEL_KIMI_BIN=/opt/midkernel/kimi.bin`, `MIDKERNEL_CLONE_TARGET=0`, `MIDKERNEL_REQUIRE_REPORT=0`, and prepends `$WORKDIR/.midkernel/bin/kimi` so agentflow cannot resolve the report-enforcing wrapper for intermediate nodes
+- `BASH_ENV=/opt/midkernel/node-env.sh` — same prepare when agentflow uses `bash -c`; graph mode skips target clone and the report EXIT trap (`prepare_node(clone_target=False)` still injects GITHUB_TOKEN + OpenRouter)
 
 Missing, empty, or stub reports are **not** uploaded; the process exits non-zero.
 
@@ -127,6 +128,10 @@ Aligned with `midkernel/app` `src/lib/agentflow-contract.ts`. App names and runn
 | `AWS_REGION` | no | — | default `us-east-1` |
 | `OPENROUTER_SECRET_ID` | no | — | `midkernel/dev/harness/openrouter-api-key` |
 | `GITHUB_TOKEN_SECRET_ID` | no | — | `midkernel/dev/harness/github-token` |
+| `MIDKERNEL_KIMI_BIN` | no | — | real kimi-cli (`/opt/midkernel/kimi.bin`); graph path always sets this |
+| `MIDKERNEL_AGENTFLOW_TARGET` | no | — | `local` for in-task graphs (no nested RunTask) |
+| `MIDKERNEL_CLONE_TARGET` | no | — | `0` on the graph path so prepare injects secrets without cloning into `$WORKDIR` |
+| `MIDKERNEL_REQUIRE_REPORT` | no | — | `0` on the graph path so PATH `kimi` / BASH_ENV do not require `report.md` after every node |
 
 A **generic** agentflow node (no `RUN_ID`) still runs `kimi` with OpenRouter if a key is already in the environment.
 

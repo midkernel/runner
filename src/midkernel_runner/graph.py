@@ -20,10 +20,17 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from midkernel_runner.config import RunConfig
+from midkernel_runner.mode import IMAGE_KIMI_BIN
 
 LOG = logging.getLogger("midkernel.graph")
 USER_AGENT = "midkernel-runner"
-IMAGE_KIMI_BIN = "/opt/midkernel/kimi.bin"
+
+GRAPH_KIMI_SHIM = """#!/bin/sh
+# In-task graph PATH shim. agentflow / playbooks may still exec `kimi`.
+# Never fall through to /usr/local/bin/kimi (report-enforcing wrapper).
+BIN="${{MIDKERNEL_KIMI_BIN:-{kimi_bin}}}"
+exec "$BIN" "$@"
+"""
 
 
 class GraphError(RuntimeError):
@@ -92,18 +99,46 @@ def should_run_playbooks_graph(config: RunConfig, *, fetch_status=None) -> bool:
     return probe_pipeline(config, fetch_status=fetch_status) != "missing"
 
 
+def graph_kimi_shim_dir(config: RunConfig) -> Path:
+    return Path(config.workdir) / ".midkernel" / "bin"
+
+
+def install_graph_kimi_shim(config: RunConfig, kimi_bin: str) -> Path:
+    """Put a ``kimi`` shim ahead of the image wrapper on PATH."""
+    directory = graph_kimi_shim_dir(config)
+    directory.mkdir(parents=True, exist_ok=True)
+    shim = directory / "kimi"
+    shim.write_text(GRAPH_KIMI_SHIM.format(kimi_bin=kimi_bin), encoding="utf-8")
+    shim.chmod(0o755)
+    return shim
+
+
 def apply_graph_env(config: RunConfig, environ: dict[str, str] | None = None) -> dict[str, str]:
-    """Export the playbooks node-I/O contract onto the process env."""
+    """Export the playbooks node-I/O contract onto the process env.
+
+    Intermediate graph nodes must not hit the PATH ``kimi`` wrapper
+    (requires ``report.md``) or BASH_ENV target clone (WORKDIR already
+    holds ``.midkernel/playbooks``).
+    """
     env = os.environ if environ is None else environ
     env["WORKDIR"] = config.workdir
     env["OUTPUTS_DIR"] = config.outputs_dir
     env["MIDKERNEL_NODE_IO"] = env.get("MIDKERNEL_NODE_IO") or "1"
     env["MIDKERNEL_AGENTFLOW_TARGET"] = env.get("MIDKERNEL_AGENTFLOW_TARGET") or "local"
-    if Path(IMAGE_KIMI_BIN).is_file() and not (env.get("MIDKERNEL_KIMI_BIN") or "").strip():
+    if not (env.get("MIDKERNEL_CLONE_TARGET") or "").strip():
+        env["MIDKERNEL_CLONE_TARGET"] = "0"
+    if not (env.get("MIDKERNEL_REQUIRE_REPORT") or "").strip():
+        env["MIDKERNEL_REQUIRE_REPORT"] = "0"
+    if not (env.get("MIDKERNEL_KIMI_BIN") or "").strip():
         env["MIDKERNEL_KIMI_BIN"] = IMAGE_KIMI_BIN
     Path(config.workdir).mkdir(parents=True, exist_ok=True)
     Path(config.outputs_dir).mkdir(parents=True, exist_ok=True)
     (Path(config.workdir) / ".midkernel").mkdir(parents=True, exist_ok=True)
+    shim = install_graph_kimi_shim(config, env["MIDKERNEL_KIMI_BIN"])
+    shim_dir = str(shim.parent)
+    current_path = env.get("PATH") or os.environ.get("PATH") or ""
+    parts = [part for part in current_path.split(os.pathsep) if part and part != shim_dir]
+    env["PATH"] = os.pathsep.join([shim_dir, *parts])
     return env
 
 

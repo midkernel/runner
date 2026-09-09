@@ -80,7 +80,7 @@ def run() -> int:
                 else:
                     raise
 
-        prepared = prepare_node()
+        prepared = prepare_node(clone_target=True)
         if prepared.secrets is None:
             raise NodePrepareError("harness secrets were not loaded")
         LOG.info("prepared node (kimi OpenRouter + task-role secrets; values not logged)")

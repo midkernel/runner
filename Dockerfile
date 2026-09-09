@@ -29,7 +29,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     WORKDIR=/workspace \
     OUTPUTS_DIR=/outputs \
     BASH_ENV=/opt/midkernel/node-env.sh \
-    KIMI_REAL_BIN=/opt/midkernel/kimi.bin
+    KIMI_REAL_BIN=/opt/midkernel/kimi.bin \
+    MIDKERNEL_KIMI_BIN=/opt/midkernel/kimi.bin
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
