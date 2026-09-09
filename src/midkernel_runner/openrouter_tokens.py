@@ -161,8 +161,11 @@ def sitecustomize_source() -> str:
         "# 402; QA cmtulxq7v0003l2046bhhc3yl openrouter_key_limit at 32768).\n"
         "# Fail loud if the OpenAILegacy cap does not install — a swallowed\n"
         "# error would leave 131072 on the wire. Also strip max_completion_tokens.\n"
+        "# After the cap: record official OpenRouter gen- ids (never invent USD).\n"
         "from midkernel_runner.openrouter_tokens import install_openai_legacy_max_tokens_cap\n"
+        "from midkernel_runner.openrouter_generations import install_openai_legacy_generation_id_capture\n"
         "install_openai_legacy_max_tokens_cap(required=True)\n"
+        "install_openai_legacy_generation_id_capture()\n"
     )
 
 
@@ -242,6 +245,16 @@ def _ensure_generation_cap(provider: object, cap: int) -> None:
     apply_max_tokens_to_kwargs(generation, cap)
 
 
+def _record_create_result(result: object) -> object:
+    """Best-effort official gen- id capture. Never changes the completion."""
+    try:
+        from midkernel_runner.openrouter_generations import wrap_openai_create_result
+
+        return wrap_openai_create_result(result, source="openai_legacy")
+    except Exception:
+        return result
+
+
 def _patch_completions_create(provider: object, cap: int) -> None:
     client = getattr(provider, "client", None)
     chat = getattr(client, "chat", None)
@@ -257,7 +270,7 @@ def _patch_completions_create(provider: object, cap: int) -> None:
 
     def wrapped_create(*args, **kwargs):
         apply_max_tokens_to_kwargs(kwargs, cap)
-        return create(*args, **kwargs)
+        return _record_create_result(create(*args, **kwargs))
 
     wrapped_create._midkernel_max_tokens_capped = True  # type: ignore[attr-defined]
     completions.create = wrapped_create

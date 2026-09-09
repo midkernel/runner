@@ -90,8 +90,18 @@ class RunConfig:
         return f"{prefix}{self.run_id}/report.md"
 
     @property
+    def generations_artifact_key(self) -> str:
+        from midkernel_runner.openrouter_generations import generations_object_key
+
+        return generations_object_key(self.artifact_key)
+
+    @property
     def s3_uri(self) -> str:
         return f"s3://{self.artifacts_bucket}/{self.artifact_key}"
+
+    @property
+    def generations_s3_uri(self) -> str:
+        return f"s3://{self.artifacts_bucket}/{self.generations_artifact_key}"
 
     @property
     def github_clone_url(self) -> str:

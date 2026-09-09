@@ -307,6 +307,14 @@ def run_playbooks_graph(
         timeout=config.timeout_seconds,
     )
     code = int(result.returncode)
+    try:
+        from midkernel_runner.artifacts import publish_openrouter_generations
+
+        uri = publish_openrouter_generations(config)
+        if uri:
+            LOG.info("uploaded %s", uri)
+    except Exception as exc:
+        LOG.warning("openrouter generations publish skipped: %s", exc)
     if code != 0:
         raise GraphError(f"playbooks graph exited {code}")
     return 0
