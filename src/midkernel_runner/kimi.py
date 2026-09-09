@@ -115,7 +115,8 @@ def render_kimi_openrouter_config(
                 f"max_context_size = {DEFAULT_CONTEXT}",
                 # Completion budget only. Never copy max_context_size here —
                 # OpenRouter 402 in_flight_budget_exhausted on 131072
-                # (GOAL cmtufzqzo0003k004mt2w0m9c).
+                # (GOAL cmtufzqzo0003k004mt2w0m9c). Default 16384 after QA
+                # cmtulxq7v0003l2046bhhc3yl 402 openrouter_key_limit at 32768.
                 f"max_tokens = {cap}",
                 "",
             ]

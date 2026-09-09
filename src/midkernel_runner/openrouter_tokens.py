@@ -4,12 +4,16 @@ GOAL ``cmtufzqzo0003k004mt2w0m9c``: kimi-openrouter bin + ``config.toml``,
 ``key_set=yes``. OpenRouter rejected ``max_tokens`` up to **131072**
 (wallet could afford ~68k–120k) with ``in_flight_budget_exhausted``.
 
+QA ``cmtulxq7v0003l2046bhhc3yl`` surface-split then 402'd
+``openrouter_key_limit``: the wire sent ``max_tokens=32768`` but the
+``$10``/mo key could only afford ~13k–25k.
+
 kimi-cli 1.49 ``openai_legacy`` does not send ``max_tokens``. OpenRouter then
 reserves the model max (131072). ``max_context_size`` (262144) must never be
 copied into ``max_tokens`` — half of that is also 131072.
 
-Default is **32768** (safe under the 68k floor). Hard allowed max **65536**.
-Any value ``> 65536`` or ``>= 131072`` becomes **32768** — never
+Default is **16384** (under the ~13k–25k key-limit floor). Hard allowed max
+**65536**. Any value ``> 65536`` or ``>= 131072`` becomes **16384** — never
 ``min(value, 65536)`` (that would turn 80000 into 65536).
 """
 
@@ -20,7 +24,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
-DEFAULT_MAX_TOKENS = 32_768
+DEFAULT_MAX_TOKENS = 16_384
 MAX_SAFE_MAX_TOKENS = 65_536
 UNSAFE_OPENROUTER_DEFAULT = 131_072
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -57,7 +61,7 @@ def clamp_max_tokens(value: int) -> int:
     """Return a wallet-safe completion cap. Never 131072 as a default.
 
     Allowed range is 1..65536. Values ``> 65536`` or ``>= 131072`` become
-    32768 — not ``min(value, 65536)``, which would turn 80000 into 65536.
+    16384 — not ``min(value, 65536)``, which would turn 80000 into 65536.
     """
     if value <= 0:
         return DEFAULT_MAX_TOKENS
@@ -152,8 +156,9 @@ def sitecustomize_dir(share_dir: Path) -> Path:
 
 def sitecustomize_source() -> str:
     return (
-        "# Midkernel: cap openai_legacy max_tokens. Do not treat max_context_size\n"
-        "# as the completion budget (GOAL cmtufzqzo0003k004mt2w0m9c 402).\n"
+        "# Midkernel: cap openai_legacy max_tokens (default 16384). Do not treat\n"
+        "# max_context_size as the completion budget (GOAL cmtufzqzo0003k004mt2w0m9c\n"
+        "# 402; QA cmtulxq7v0003l2046bhhc3yl openrouter_key_limit at 32768).\n"
         "# Fail loud if the OpenAILegacy cap does not install — a swallowed\n"
         "# error would leave 131072 on the wire. Also strip max_completion_tokens.\n"
         "from midkernel_runner.openrouter_tokens import install_openai_legacy_max_tokens_cap\n"
