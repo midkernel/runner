@@ -85,7 +85,7 @@ def run() -> int:
             raise NodePrepareError("harness secrets were not loaded")
         LOG.info("prepared node (kimi OpenRouter + task-role secrets; values not logged)")
         prompt = load_playbook_prompt(config)
-        LOG.info("Raw playbook prompt loaded (%d chars)", len(prompt))
+        LOG.info("playbook prompt loaded (%d chars)", len(prompt))
         if prepared.cloned:
             LOG.info("cloned github.com/%s/%s", config.github_owner, config.github_name)
         report = run_kimi(config, prepared.secrets, prompt)

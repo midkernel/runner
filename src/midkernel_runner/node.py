@@ -41,7 +41,11 @@ def apply_openrouter_env(api_key: str) -> None:
         os.environ[key] = value
 
 
-def prepare_node(*, environ: dict[str, str] | None = None) -> PreparedNode:
+def prepare_node(
+    *,
+    environ: dict[str, str] | None = None,
+    clone_target: bool = True,
+) -> PreparedNode:
     env = dict(os.environ if environ is None else environ)
     context = load_optional_run_context(env)
     secrets: HarnessSecrets | None = None
@@ -83,7 +87,7 @@ def prepare_node(*, environ: dict[str, str] | None = None) -> PreparedNode:
         if secrets.github_token:
             os.environ["GITHUB_TOKEN"] = secrets.github_token
 
-    if config is not None and secrets is not None and secrets.github_token:
+    if clone_target and config is not None and secrets is not None and secrets.github_token:
         dest = Path(config.repo_dir)
         if not (dest / ".git").exists():
             try:
