@@ -23,8 +23,8 @@
         { "name": "PROFILE", "value": "low" },
         { "name": "ARTIFACTS_BUCKET", "value": "midkernel-dev-artifacts" },
         { "name": "ARTIFACTS_PREFIX", "value": "runs/" },
-        { "name": "MODEL", "value": "moonshotai/kimi-k3" },
-        { "name": "OPENROUTER_MODEL", "value": "moonshotai/kimi-k3" },
+        { "name": "MODEL", "value": "google/gemini-3.8-flash" },
+        { "name": "OPENROUTER_MODEL", "value": "google/gemini-3.8-flash" },
         { "name": "AWS_REGION", "value": "us-east-1" }
       ],
       "logConfiguration": {

@@ -37,7 +37,7 @@ from midkernel_runner.report import ReportError, persist_report, validate_report
 from midkernel_runner.secrets import HarnessSecrets
 
 KIMI_BIN = os.environ.get("KIMI_BIN", "kimi")
-DEFAULT_OPENROUTER_SLUG = "moonshotai/kimi-k3"
+DEFAULT_OPENROUTER_SLUG = "google/gemini-3.8-flash"
 DEFAULT_CONTEXT = 262_144
 
 

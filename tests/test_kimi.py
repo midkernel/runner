@@ -21,6 +21,7 @@ from midkernel_runner.secrets import HarnessSecrets
 def test_openrouter_slug_strips_provider_prefix():
     assert openrouter_slug("openrouter/moonshotai/kimi-k3") == "moonshotai/kimi-k3"
     assert openrouter_slug("moonshotai/kimi-k3") == "moonshotai/kimi-k3"
+    assert openrouter_slug("") == "google/gemini-3.8-flash"
 
 
 def test_model_aliases_cover_agentflow_and_app():
@@ -52,12 +53,21 @@ def test_export_sets_openai_key_for_legacy_provider():
     assert env["KIMI_API_KEY"] == "sk-or-v1-x"
     assert env["OPENAI_BASE_URL"] == "https://openrouter.ai/api/v1"
     assert env["KIMI_BASE_URL"] == OPENROUTER_BASE_URL
-    assert env["KIMI_MODEL_NAME"] == "moonshotai/kimi-k3"
+    assert env["KIMI_MODEL_NAME"] == "google/gemini-3.8-flash"
     assert env["KIMI_MODEL_MAX_TOKENS"] == str(DEFAULT_MAX_TOKENS)
     assert env["KIMI_MODEL_MAX_COMPLETION_TOKENS"] == str(DEFAULT_MAX_TOKENS)
     assert env["KIMI_MAX_TOKENS"] == str(DEFAULT_MAX_TOKENS)
     assert env["OPENROUTER_MAX_TOKENS"] == str(DEFAULT_MAX_TOKENS)
     assert "AI_GATEWAY_API_KEY" not in env
+
+
+def test_export_honors_openrouter_model_env():
+    env = export_kimi_openrouter_env(
+        {"OPENROUTER_MODEL": "moonshotai/kimi-k3"},
+        "sk-or-v1-x",
+    )
+    assert env["KIMI_MODEL_NAME"] == "moonshotai/kimi-k3"
+    assert env["OPENROUTER_MODEL"] == "moonshotai/kimi-k3"
 
 
 def test_export_sets_dummy_kimi_fallback_and_share_dir(tmp_path):
