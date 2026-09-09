@@ -76,6 +76,37 @@ def test_prepare_node_clone_target_false_injects_secrets(tmp_path, monkeypatch):
     assert prepared.kimi_config_path == work / ".midkernel" / "kimi" / "config.toml"
 
 
+def test_prepare_node_clone_target_false_allows_nonempty_workspace(tmp_path, monkeypatch):
+    """Fargate /workspace may already have .midkernel from the image (#6 / GOAL)."""
+    home = tmp_path / "home"
+    work = tmp_path / "workspace"
+    (work / ".midkernel" / "playbooks").mkdir(parents=True)
+    (work / "preexisting.txt").write_text("from image\n", encoding="utf-8")
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    def boom(*_a, **_k):
+        raise AssertionError("must not clone into a non-empty workdir on the graph path")
+
+    monkeypatch.setattr("midkernel_runner.node.clone_repository", boom)
+    env = {
+        "RUN_ID": "cmtue7rv90003l104ysmh21eu",
+        "GITHUB_OWNER": "acme",
+        "GITHUB_NAME": "target",
+        "HOME": str(home),
+        "WORKDIR": str(work),
+        "MIDKERNEL_LOCAL": "1",
+        "OPENROUTER_API_KEY": "sk-or-v1-graph",
+        "GITHUB_TOKEN": "ghs_from_app",
+    }
+    prepared = prepare_node(environ=env, clone_target=False)
+    assert prepared.cloned is False
+    assert prepared.secrets is not None
+    assert prepared.secrets.openrouter_api_key == "sk-or-v1-graph"
+    assert os.environ["OPENROUTER_API_KEY"] == "sk-or-v1-graph"
+    assert (work / "preexisting.txt").is_file()
+
+
 def test_prepare_node_honors_clone_target_env(tmp_path, monkeypatch):
     home = tmp_path / "home"
     work = tmp_path / "workspace"

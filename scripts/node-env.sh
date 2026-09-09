@@ -1,6 +1,8 @@
 #!/bin/sh
-# Sourced by BASH_ENV for agentflow's `bash -c` node launch, and by the
-# image entrypoint. Idempotent. Never prints secret values.
+# Sourced by BASH_ENV for agentflow's `bash -c` node launch.
+# The image entrypoint does *not* source this on CMD midkernel-default
+# (GOAL cmtue7rv90003l104ysmh21eu: clone-into-nonempty /workspace before
+# midkernel-runner). Idempotent. Never prints secret values.
 #
 # In-task playbooks graphs: skip target clone (MIDKERNEL_CLONE_TARGET=0)
 # and do not require report.md after every bash -c. Intermediate nodes
@@ -33,8 +35,8 @@ if command -v midkernel-node-prepare >/dev/null 2>&1; then
   else
     echo "midkernel: node prepare failed" >&2
     if [ -n "${RUN_ID:-}" ]; then
-      # BASH_ENV and the image entrypoint both source this file. Abort the
-      # node when Midkernel scan env is present and secrets/clone failed.
+      # BASH_ENV sources this file (entrypoint default CMD does not).
+      # Abort the node when Midkernel scan env is present and secrets/clone failed.
       exit 1
     fi
   fi

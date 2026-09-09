@@ -25,7 +25,7 @@ from midkernel_runner.kimi import (
     graph_kimi_share_dir,
     write_kimi_openrouter_config,
 )
-from midkernel_runner.mode import IMAGE_KIMI_BIN
+from midkernel_runner.mode import IMAGE_KIMI_BIN, apply_graph_mode_flags
 
 LOG = logging.getLogger("midkernel.graph")
 USER_AGENT = "midkernel-runner"
@@ -160,12 +160,7 @@ def apply_graph_env(config: RunConfig, environ: dict[str, str] | None = None) ->
     env = os.environ if environ is None else environ
     env["WORKDIR"] = config.workdir
     env["OUTPUTS_DIR"] = config.outputs_dir
-    env["MIDKERNEL_NODE_IO"] = env.get("MIDKERNEL_NODE_IO") or "1"
-    env["MIDKERNEL_AGENTFLOW_TARGET"] = env.get("MIDKERNEL_AGENTFLOW_TARGET") or "local"
-    if not (env.get("MIDKERNEL_CLONE_TARGET") or "").strip():
-        env["MIDKERNEL_CLONE_TARGET"] = "0"
-    if not (env.get("MIDKERNEL_REQUIRE_REPORT") or "").strip():
-        env["MIDKERNEL_REQUIRE_REPORT"] = "0"
+    apply_graph_mode_flags(env)
     pinned = (env.get("MIDKERNEL_KIMI_BIN") or "").strip()
     already_front = pinned.endswith("kimi-openrouter") or "kimi_graph_bin" in pinned
     if already_front:
