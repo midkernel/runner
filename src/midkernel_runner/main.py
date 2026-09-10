@@ -17,7 +17,7 @@ import logging
 import sys
 from pathlib import Path
 
-from midkernel_runner.artifacts import ArtifactError, upload_report
+from midkernel_runner.artifacts import ArtifactError, publish_openrouter_generations, upload_report
 from midkernel_runner.clone import CloneError
 from midkernel_runner.config import ConfigError, load_config
 from midkernel_runner.graph import GraphError, run_playbooks_graph, should_run_playbooks_graph
@@ -28,6 +28,19 @@ from midkernel_runner.playbook import PlaybookError, load_playbook_prompt
 from midkernel_runner.report import ReportError
 
 LOG = logging.getLogger("midkernel.runner")
+
+
+def _publish_generations(config) -> None:
+    """Best-effort official gen- ids. Missing ids → no artifact, no invented USD."""
+    try:
+        uri = publish_openrouter_generations(config)
+    except ArtifactError as exc:
+        LOG.warning("openrouter generations upload skipped: %s", exc)
+        return
+    if uri:
+        LOG.info("uploaded %s", uri)
+    else:
+        LOG.info("no official OpenRouter generation ids (openrouterGenerationIds empty)")
 
 
 def _configure_logging() -> None:
@@ -77,7 +90,9 @@ def run() -> int:
                 raise NodePrepareError("harness secrets were not loaded")
             LOG.info("prepared node (kimi OpenRouter + task-role secrets; values not logged)")
             try:
-                return run_playbooks_graph(config)
+                code = run_playbooks_graph(config)
+                _publish_generations(config)
+                return code
             except GraphError as exc:
                 # Confirmed-missing pipelines stay on md+kimi. An unknown probe
                 # still tries the graph; if the clone has no pipelines/<slug>.py,
@@ -100,6 +115,7 @@ def run() -> int:
         LOG.info("kimi produced report.md (%d bytes)", len(report.encode("utf-8")))
         uri = upload_report(config, Path(config.report_path))
         LOG.info("uploaded %s", uri)
+        _publish_generations(config)
     except (
         NodePrepareError,
         PlaybookError,

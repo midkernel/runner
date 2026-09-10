@@ -326,6 +326,18 @@ def run_kimi(
     )
     stdout = result.stdout or ""
     stderr = (result.stderr or "").strip()
+    try:
+        from midkernel_runner.openrouter_generations import (
+            extract_generation_ids_from_kimi_stdout,
+            record_generation_ids,
+        )
+
+        record_generation_ids(
+            extract_generation_ids_from_kimi_stdout(stdout),
+            source="kimi-stdout",
+        )
+    except Exception:
+        pass
 
     if report_path.is_file():
         try:

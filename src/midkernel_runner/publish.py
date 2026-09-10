@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from midkernel_runner.artifacts import ArtifactError, upload_report
+from midkernel_runner.artifacts import ArtifactError, publish_openrouter_generations, upload_report
 from midkernel_runner.config import ConfigError, load_config, load_optional_run_context
 from midkernel_runner.report import ReportError, persist_report
 
@@ -76,7 +76,14 @@ def publish_report(*, require: bool | None = None) -> str | None:
 
     try:
         persist_report(Path(config.report_path), found.read_text(encoding="utf-8"))
-        return upload_report(config, Path(config.report_path))
+        uri = upload_report(config, Path(config.report_path))
+        try:
+            gens = publish_openrouter_generations(config)
+            if gens:
+                LOG.info("uploaded %s", gens)
+        except ArtifactError as exc:
+            LOG.warning("openrouter generations upload skipped: %s", exc)
+        return uri
     except (ReportError, ArtifactError) as exc:
         raise PublishError(str(exc)) from exc
 
