@@ -142,7 +142,7 @@ Aligned with `midkernel/app` `src/lib/agentflow-contract.ts`. App names and runn
 | `GITHUB_NAME` | yes (clone) | — | |
 | `PLAYBOOK_SLUG` | no | `PLAYBOOK` | default `security-review` |
 | `SCAN_PROFILE` | no | `PROFILE` | `low` \| `balanced` \| `max` |
-| `AGENT_TIMEOUT_SECONDS` | no | — | **per-node** kimi / review budget. Default `PROFILE_TIMEOUT_SECONDS` (`low`=900, `balanced`=1800, `max`=3600). Playbooks GOAL nodes use the same profile table independently. |
+| `AGENT_TIMEOUT_SECONDS` | no | — | **per-node** kimi / review budget. Default `PROFILE_TIMEOUT_SECONDS` (`low`=1800, `balanced`=1800, `max`=3600). Playbooks GOAL nodes use the same profile table independently. QA `cmtutkn8k0003id04hs5s8j7z` hunter-1 died exit 124 after 900s once runner#12's 11700s wall clock held. |
 | `AGENT_RUN_TIMEOUT_SECONDS` | no | — | **whole-run** wall clock for `ecs-in-task.sh` / `agentflow run`. Default is `node_timeout * serial_kimi_node_budget + 900` (prepare 10m + publish 5m). GOAL serial budget is 6 fixed kimi nodes + `GOAL_COUNT` hunters (default 12). Do **not** set this to 900 on `goal-security-review`: QA `cmtuschdc0003lb04ktzewa7k` (low, DeepSeek) died at exactly 900s (`00:25:27Z` → `00:40:27Z` `TimeoutExpired`) after threat-model ~9m + goal-author ~4.5m left ~82s for surface-split. |
 | `THREAT_PIN` | no | `THREAT` | max 80 chars |
 | `GITHUB_REF` | no | — | shallow clone `--branch` |
@@ -168,7 +168,7 @@ A **generic** agentflow node (no `RUN_ID`) still runs `kimi` with OpenRouter if 
 
 | Profile | cpu | memory | per-node timeout | GOAL whole-run default (`GOAL_COUNT=6`) |
 | --- | --- | --- | --- | --- |
-| `low` | `1024` | `2048` | 15 min | 3h 15m (`900s × 12 + 900s`) |
+| `low` | `1024` | `2048` | 30 min | 6h 15m (`1800s × 12 + 900s`) |
 | `balanced` | `2048` | `4096` | 30 min | 6h 15m |
 | `max` | `4096` | `8192` | 60 min | 12h 15m |
 

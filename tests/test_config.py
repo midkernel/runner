@@ -39,9 +39,19 @@ def test_defaults():
 def test_profile_timeout_and_threat():
     cfg = load_config(_base(SCAN_PROFILE="low", THREAT_PIN="reentrancy"))
     assert cfg.scan_profile == "low"
-    assert cfg.timeout_seconds == 15 * 60
-    assert cfg.run_timeout_seconds == 15 * 60 + GRAPH_SHELL_OVERHEAD_SECONDS
+    assert cfg.timeout_seconds == 1800
+    assert cfg.timeout_seconds == 30 * 60
+    assert cfg.run_timeout_seconds == 30 * 60 + GRAPH_SHELL_OVERHEAD_SECONDS
     assert cfg.threat_pin == "reentrancy"
+
+
+def test_low_profile_node_timeout_is_1800():
+    """QA cmtutkn8k0003id04hs5s8j7z: hunter-1 exit 124 after 900s."""
+    assert PROFILE_TIMEOUT_SECONDS["low"] == 1800
+    assert PROFILE_TIMEOUT_SECONDS["low"] == PROFILE_TIMEOUT_SECONDS["balanced"]
+    assert PROFILE_TIMEOUT_SECONDS["max"] == 60 * 60
+    cfg = load_config(_base(SCAN_PROFILE="low"))
+    assert cfg.timeout_seconds == 1800
 
 
 def test_max_timeout():
@@ -117,21 +127,21 @@ def test_parse_goal_count_matches_playbooks():
 
 
 def test_default_run_timeout_scales_goal_not_one_node():
-    """900s whole-run is one node. GOAL needs node_timeout * serial budget."""
+    """One node timeout is not a whole-run budget. Formula is unchanged."""
     low = PROFILE_TIMEOUT_SECONDS["low"]
-    assert low == 15 * 60
+    assert low == 1800
     review = default_run_timeout_seconds(low, "security-review")
     goal = default_run_timeout_seconds(low, "goal-security-review")
     assert review == low + GRAPH_SHELL_OVERHEAD_SECONDS
     assert goal == low * 12 + GRAPH_SHELL_OVERHEAD_SECONDS
-    assert goal == 11700
+    assert goal == 22500
     assert goal > 900
     assert goal >= 90 * 60
     # threat-model + goal-author alone already ~13m on cmtuschdc0003lb04ktzewa7k
     assert goal > 13 * 60 + low
 
 
-def test_low_goal_keeps_per_node_900_and_raises_wall_clock():
+def test_low_goal_keeps_per_node_1800_and_raises_wall_clock():
     cfg = load_config(
         _base(
             SCAN_PROFILE="low",
@@ -139,8 +149,8 @@ def test_low_goal_keeps_per_node_900_and_raises_wall_clock():
             OPENROUTER_MODEL="deepseek/deepseek-v4-flash-0731",
         )
     )
-    assert cfg.timeout_seconds == 15 * 60
-    assert cfg.run_timeout_seconds == 11700
+    assert cfg.timeout_seconds == 1800
+    assert cfg.run_timeout_seconds == 22500
     assert cfg.run_timeout_seconds > cfg.timeout_seconds
     assert cfg.openrouter_model == "deepseek/deepseek-v4-flash-0731"
 
@@ -149,8 +159,8 @@ def test_goal_count_shrinks_run_timeout_not_node_timeout():
     cfg = load_config(
         _base(SCAN_PROFILE="low", PLAYBOOK="goal-security-review", GOAL_COUNT="1")
     )
-    assert cfg.timeout_seconds == 15 * 60
-    assert cfg.run_timeout_seconds == 15 * 60 * 7 + GRAPH_SHELL_OVERHEAD_SECONDS
+    assert cfg.timeout_seconds == 1800
+    assert cfg.run_timeout_seconds == 1800 * 7 + GRAPH_SHELL_OVERHEAD_SECONDS
 
 
 def test_agent_timeout_is_per_node_not_wall_clock():
@@ -173,7 +183,7 @@ def test_agent_run_timeout_overrides_computed_wall_clock():
             AGENT_RUN_TIMEOUT_SECONDS="5400",
         )
     )
-    assert cfg.timeout_seconds == 15 * 60
+    assert cfg.timeout_seconds == 1800
     assert cfg.run_timeout_seconds == 5400
 
 

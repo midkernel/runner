@@ -32,8 +32,13 @@ SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 # Per-node kimi / review budget. Playbooks `_midkernel.py` uses the same
 # table for each GOAL hunter / judge. Do not reuse this as the ecs-in-task
 # wall clock — GOAL is a long serial graph.
+# QA cmtutkn8k0003id04hs5s8j7z (low, DeepSeek): runner#12 whole-run
+# budget held (run_timeout=11700s, no TimeoutExpired on ecs-in-task),
+# but hunter-1 died exit 124 after 900s (`Timed out after 900s`) with
+# no output.md / RESULT.md. Hunters 2–6 skipped (serial). Raise low
+# to the former balanced node budget so each hunter gets 30m.
 PROFILE_TIMEOUT_SECONDS = {
-    "low": 15 * 60,
+    "low": 30 * 60,
     "balanced": 30 * 60,
     "max": 60 * 60,
 }
@@ -192,7 +197,7 @@ def default_run_timeout_seconds(
 ) -> int:
     """Whole-run wall clock for ``ecs-in-task.sh`` / ``agentflow run``.
 
-    A single profile timeout (900s on low) is enough for one kimi node, not
+    A single profile timeout (1800s on low) is enough for one kimi node, not
     for GOAL. ``node_timeout * serial_kimi_node_budget + prepare/publish``
     is the budget that lets later nodes start after threat-model + goal-author.
     """
