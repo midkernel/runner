@@ -162,6 +162,7 @@ def sitecustomize_source() -> str:
         "# Fail loud if the OpenAILegacy cap does not install — a swallowed\n"
         "# error would leave 131072 on the wire. Also strip max_completion_tokens.\n"
         "# After the cap: record official OpenRouter gen- ids (never invent USD).\n"
+        "# 429 retries live in playbooks wrap_kimi. Account 20 RPM is OpenRouter tier.\n"
         "from midkernel_runner.openrouter_tokens import install_openai_legacy_max_tokens_cap\n"
         "from midkernel_runner.openrouter_generations import install_openai_legacy_generation_id_capture\n"
         "install_openai_legacy_max_tokens_cap(required=True)\n"

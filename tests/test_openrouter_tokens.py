@@ -156,6 +156,7 @@ def test_sitecustomize_fails_loud_and_does_not_swallow_errors(tmp_path):
     written = path.read_text(encoding="utf-8")
     assert "install_openai_legacy_max_tokens_cap" in written
     assert "install_openai_legacy_generation_id_capture" in written
+    assert "install_openai_legacy_429_retry" not in written
     assert "except Exception" not in written
 
 

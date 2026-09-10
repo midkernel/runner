@@ -34,6 +34,11 @@ _GRAPH_ENV_KEYS = (
     "KIMI_MAX_TOKENS",
     "OPENROUTER_MAX_TOKENS",
     "MIDKERNEL_OPENROUTER_MAX_TOKENS",
+    "GOAL_CONCURRENCY",
+    "CONCURRENCY",
+    "GRAPH_CONCURRENCY",
+    "AGENTFLOW_CONCURRENCY",
+    "MIDKERNEL_CONCURRENCY",
     "OPENROUTER_API_KEY",
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
@@ -129,6 +134,29 @@ def test_apply_graph_env_exports_contract(tmp_path, monkeypatch):
     # truth for fail_fast (QA cmtuvv61w0003gm0az74grqv2).
     assert not any("fail_fast" in key.lower() for key in env)
     assert env.get("AGENTFLOW_FAIL_FAST") is None
+    assert env.get("GOAL_CONCURRENCY") is None
+    assert env.get("CONCURRENCY") is None
+    assert env.get("GRAPH_CONCURRENCY") is None
+
+
+def test_apply_graph_env_passes_goal_concurrency_from_task(tmp_path):
+    """App GOAL_CONCURRENCY / CONCURRENCY must reach playbooks Graph() emit."""
+    cfg = _cfg(WORKDIR=str(tmp_path / "ws"), OUTPUTS_DIR=str(tmp_path / "out"))
+    env = apply_graph_env(
+        cfg,
+        environ={"CONCURRENCY": "4", "GOAL_COUNT": "6", "PATH": "/usr/bin"},
+    )
+    assert env["GOAL_CONCURRENCY"] == "4"
+    assert env["CONCURRENCY"] == "4"
+    assert env["GRAPH_CONCURRENCY"] == "4"
+    assert env["GOAL_COUNT"] == "6"
+
+    env = apply_graph_env(
+        cfg,
+        environ={"GOAL_CONCURRENCY": "2", "CONCURRENCY": "6", "PATH": "/usr/bin"},
+    )
+    assert env["GOAL_CONCURRENCY"] == "2"
+    assert env["CONCURRENCY"] == "2"
 
 
 def test_apply_graph_env_exports_openrouter_for_kimi_bin(tmp_path):
@@ -205,6 +233,7 @@ def test_apply_graph_env_path_shim_beats_wrapper(tmp_path):
 
 def test_run_playbooks_graph_invokes_agentflow(tmp_path, monkeypatch):
     _isolate_os_graph_env(monkeypatch)
+    monkeypatch.setenv("CONCURRENCY", "4")
     playbooks = tmp_path / "playbooks"
     (playbooks / "pipelines").mkdir(parents=True)
     (playbooks / "pipelines" / "goal-security-review.py").write_text("print('ok')\n")
@@ -242,6 +271,9 @@ def test_run_playbooks_graph_invokes_agentflow(tmp_path, monkeypatch):
     assert seen["env"].get("MIDKERNEL_CLONE_TARGET") == "0"
     assert seen["env"].get("MIDKERNEL_REQUIRE_REPORT") == "0"
     assert seen["env"].get("MIDKERNEL_AGENTFLOW_TARGET") == "local"
+    assert seen["env"].get("GOAL_CONCURRENCY") == "4"
+    assert seen["env"].get("CONCURRENCY") == "4"
+    assert seen["env"].get("GRAPH_CONCURRENCY") == "4"
     shim_dir = str(tmp_path / "ws" / ".midkernel" / "bin")
     assert seen["env"]["PATH"].split(os.pathsep)[0] == shim_dir
     assert seen["env"].get("KIMI_SHARE_DIR") == str(tmp_path / "ws" / ".midkernel" / "kimi")

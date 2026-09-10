@@ -107,7 +107,7 @@ Uploaded via the task role (`s3:PutObject`, SSE-S3). Helpers:
   - `KIMI_SHARE_DIR=$WORKDIR/.midkernel/kimi` + OpenRouter `config.toml`
   - `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENROUTER_API_KEY` (`openai_legacy`)
   - `KIMI_API_KEY` / `KIMI_BASE_URL` / `KIMI_MODEL_NAME` (kimi-cli 1.49 dummy `type=kimi` fallback if `--config` still misses)
-  - **`max_tokens = 16384`** on every model alias (never 131072). GOAL `cmtufzqzo0003k004mt2w0m9c` hunters 402'd `in_flight_budget_exhausted` because kimi-cli 1.49 `openai_legacy` omitted `max_tokens` and OpenRouter reserved the model max (131072; wallet could afford ~68k–120k). QA `cmtulxq7v0003l2046bhhc3yl` surface-split then 402'd `openrouter_key_limit` with `max_tokens=32768` on the wire (James `$10`/mo key could afford ~13k–25k). The front does **not** copy `max_context_size` (262144) into `max_tokens`. Override via first-wins `MIDKERNEL_OPENROUTER_MAX_TOKENS` / `OPENROUTER_MAX_TOKENS` / `KIMI_MAX_TOKENS` / `KIMI_MODEL_MAX_TOKENS` / `KIMI_MODEL_MAX_COMPLETION_TOKENS` (hard allowed max 65536; any value `>65536` or `>=131072` → 16384, not `min(value, 65536)`). Playbooks `prepare` / `render_kimi_openrouter_config` write the same `max_tokens = 16384` line — keep it in lockstep. If wrap_kimi already set `OPENAI_BASE_URL` / config `base_url` to a localhost injection proxy, kimi-openrouter **must not** rewrite it to `https://openrouter.ai/api/v1`. sitecustomize / OpenAILegacy patch **fails loud** if it does not install, strips `max_completion_tokens`, and always sets outbound `max_tokens` to the clamped value.
+  - **`max_tokens = 16384`** on every model alias (never 131072). GOAL `cmtufzqzo0003k004mt2w0m9c` hunters 402'd `in_flight_budget_exhausted` because kimi-cli 1.49 `openai_legacy` omitted `max_tokens` and OpenRouter reserved the model max (131072; wallet could afford ~68k–120k). QA `cmtulxq7v0003l2046bhhc3yl` surface-split then 402'd `openrouter_key_limit` with `max_tokens=32768` on the wire (James `$10`/mo key could afford ~13k–25k). The front does **not** copy `max_context_size` (262144) into `max_tokens`. Override via first-wins `MIDKERNEL_OPENROUTER_MAX_TOKENS` / `OPENROUTER_MAX_TOKENS` / `KIMI_MAX_TOKENS` / `KIMI_MODEL_MAX_TOKENS` / `KIMI_MODEL_MAX_COMPLETION_TOKENS` (hard allowed max 65536; any value `>65536` or `>=131072` → 16384, not `min(value, 65536)`). Playbooks `prepare` / `render_kimi_openrouter_config` write the same `max_tokens = 16384` line — keep it in lockstep. If wrap_kimi already set `OPENAI_BASE_URL` / config `base_url` to a localhost injection proxy, kimi-openrouter **must not** rewrite it to `https://openrouter.ai/api/v1`. sitecustomize / OpenAILegacy patch **fails loud** if it does not install, strips `max_completion_tokens`, and always sets outbound `max_tokens` to the clamped value. 429 retries stay in playbooks `wrap_kimi` (8 tries / 90s). Account 20 RPM (`openrouter_new_account`) is an OpenRouter key tier — see [OpenRouter 429 RPM](#openrouter-429-rpm-goal-hunter-fan-out). `apply_graph_env` passes `GOAL_CONCURRENCY` / `CONCURRENCY` through to graph emit.
 
 **Playbooks coordination:** `_node_io.graph_runtime_env()` / `kimi_io_env()` do not need to strip these keys (LocalRunner copies `os.environ` then overlays node env). Harden playbooks by passing `KIMI_SHARE_DIR`, `KIMI_BASE_URL`, `KIMI_MODEL_NAME`, `OPENAI_*`, and `OPENROUTER_*` through node env. Separately, playbooks `extra_args=["--config", …]` only defines `models.midkernel` while agentflow adds `--model moonshotai/kimi-k3` — that mismatch is what produced `LLM not set` on `cmtudf0470003jp040742shv6` / `cmtudm8f20003i90462yr3vxq`. Runner now covers the fallback; playbooks should still add the OpenRouter slug aliases (or drop the mismatched `--model`) so `--config` itself resolves.
 - After cloning playbooks, runner `chmod +x` + `--version` short-circuit on `pipelines/_node_io.py` so agentflow `kimi_ready` (`<executable> --version` in the prepared local shell) execs `MIDKERNEL_KIMI_BIN` instead of wrap_kimi. PATH `kimi --version` also execs the real binary with no prepare/publish
@@ -152,6 +152,7 @@ Aligned with `midkernel/app` `src/lib/agentflow-contract.ts`. App names and runn
 | `ARTIFACTS_KEY` | no | — | exact S3 key if the app sets it |
 | `OPENROUTER_MODEL` | no | `MODEL` | default `google/gemini-3.8-flash` (Pareto `balanced`) |
 | `OPENROUTER_MAX_TOKENS` | no | first-wins: `MIDKERNEL_OPENROUTER_MAX_TOKENS`, `OPENROUTER_MAX_TOKENS`, `KIMI_MAX_TOKENS`, `KIMI_MODEL_MAX_TOKENS`, `KIMI_MODEL_MAX_COMPLETION_TOKENS` | in-task default **16384**, hard allowed max **65536**; `>65536` or `>=131072` → 16384 (not `min(value, 65536)`) |
+| `GOAL_CONCURRENCY` | no | first-wins: `GOAL_CONCURRENCY`, `CONCURRENCY`, `GRAPH_CONCURRENCY` (also accepts `AGENTFLOW_CONCURRENCY` / `MIDKERNEL_CONCURRENCY`) | Playbooks #17 hunter slot cap. Picker **`1 \| 2 \| 4 \| 6`**. Runner copies a task-env value onto `GOAL_CONCURRENCY` / `CONCURRENCY` / `GRAPH_CONCURRENCY` so graph emit sees it. Does **not** invent a default — playbooks uses **2**. `GOAL_COUNT` is still how many hunters exist. `security-review` stays linear. |
 | `AWS_REGION` | no | — | default `us-east-1` |
 | `OPENROUTER_SECRET_ID` | no | — | `midkernel/dev/harness/openrouter-api-key` |
 | `GITHUB_TOKEN_SECRET_ID` | no | — | `midkernel/dev/harness/github-token` |
@@ -161,6 +162,25 @@ Aligned with `midkernel/app` `src/lib/agentflow-contract.ts`. App names and runn
 | `MIDKERNEL_REQUIRE_REPORT` | no | — | `0` on the graph path so PATH `kimi` / BASH_ENV do not require `report.md` after every node |
 
 A **generic** agentflow node (no `RUN_ID`) still runs `kimi` with OpenRouter if a key is already in the environment.
+
+### OpenRouter 429 RPM (GOAL hunter fan-out)
+
+Run `cmtun51000003l704q7lyyjrf` died `exit 75` with `limit_source=openrouter_new_account` — **20 requests/minute** on `moonshotai/kimi-k3` when six hunters hit OpenRouter at once.
+
+| Layer | What | Who can change it |
+| --- | --- | --- |
+| **Account** | OpenRouter new-account / key **tier** = 20 RPM. Extra API keys do not add RPM. | OpenRouter only. Runner/playbooks cannot raise this. |
+| **Client** | `wrap_kimi` retries 429 up to 8 times, `Retry-After` through 90s | Already in midkernel/playbooks `_node_io.py`. This image does **not** add a second retry/RPM client. |
+| **Graph** | Default `GOAL_CONCURRENCY=2` (playbooks #17). App picker `1\|2\|4\|6` on `RunTask`. | App sets `GOAL_CONCURRENCY` or `CONCURRENCY`; runner passes it through to graph emit. |
+
+**What James can do on the OpenRouter account** (tier only — no RPM slider):
+
+1. [Credits](https://openrouter.ai/settings/credits) on the account behind `midkernel/dev/harness/openrouter-api-key`. Confirm lifetime purchases and that the key is not stuck on `is_free_tier` / `openrouter_new_account`.
+2. Buy credits if the wallet is $0 / the $10/mo cap that already 402'd `cmtulxq7v0003l2046bhhc3yl`.
+3. [Keys](https://openrouter.ai/settings/keys) → harness key → no extra per-key spend pin.
+4. `GET https://openrouter.ai/api/v1/key`. If it still shows a new-account limiter after credits post, email OpenRouter support and ask them to lift `openrouter_new_account`. Until then keep the Start-scan picker at **2**.
+
+Do **not** start a new Scan to verify this.
 
 ## Suggested ECS task definition
 
