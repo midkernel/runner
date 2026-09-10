@@ -126,6 +126,8 @@ Aligned with `midkernel/app` `src/lib/agentflow-contract.ts`. App names and runn
 | `GITHUB_NAME` | yes (clone) | — | |
 | `PLAYBOOK_SLUG` | no | `PLAYBOOK` | default `security-review` |
 | `SCAN_PROFILE` | no | `PROFILE` | `low` \| `balanced` \| `max` |
+| `AGENT_TIMEOUT_SECONDS` | no | — | **per-node** kimi / review budget. Default `PROFILE_TIMEOUT_SECONDS` (`low`=900, `balanced`=1800, `max`=3600). Playbooks GOAL nodes use the same profile table independently. |
+| `AGENT_RUN_TIMEOUT_SECONDS` | no | — | **whole-run** wall clock for `ecs-in-task.sh` / `agentflow run`. Default is `node_timeout * serial_kimi_node_budget + 900` (prepare 10m + publish 5m). GOAL serial budget is 6 fixed kimi nodes + `GOAL_COUNT` hunters (default 12). Do **not** set this to 900 on `goal-security-review`: QA `cmtuschdc0003lb04ktzewa7k` (low, DeepSeek) died at exactly 900s (`00:25:27Z` → `00:40:27Z` `TimeoutExpired`) after threat-model ~9m + goal-author ~4.5m left ~82s for surface-split. |
 | `THREAT_PIN` | no | `THREAT` | max 80 chars |
 | `GITHUB_REF` | no | — | shallow clone `--branch` |
 | `GITHUB_TOKEN` | no | — | per-run installation token |
@@ -148,11 +150,11 @@ A **generic** agentflow node (no `RUN_ID`) still runs `kimi` with OpenRouter if 
 
 `examples/task-definition.json` / `examples/runtask.json`. Family `midkernel-dev-scan` or app-registered `midkernel-agentflow-agents`. Logs: `/agentflow`. Capacity: Fargate Spot preferred.
 
-| Profile | cpu | memory |
-| --- | --- | --- |
-| `low` | `1024` | `2048` |
-| `balanced` | `2048` | `4096` |
-| `max` | `4096` | `8192` |
+| Profile | cpu | memory | per-node timeout | GOAL whole-run default (`GOAL_COUNT=6`) |
+| --- | --- | --- | --- | --- |
+| `low` | `1024` | `2048` | 15 min | 3h 15m (`900s × 12 + 900s`) |
+| `balanced` | `2048` | `4096` | 30 min | 6h 15m |
+| `max` | `4096` | `8192` | 60 min | 12h 15m |
 
 When the app RunTasks **without** a command override and `RUN_ID` is set, `CMD midkernel-default` execs `midkernel-runner` **without** an entrypoint clone-prepare. Runner then runs the graph when `pipelines/<PLAYBOOK>.py` exists (clone playbooks → `agentflow run` → `graph.json` + `nodes/*` + `report.md`). Native agentflow overrides that with `bash -c` + `kimi`.
 

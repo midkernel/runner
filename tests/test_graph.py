@@ -213,6 +213,7 @@ def test_run_playbooks_graph_invokes_agentflow(tmp_path, monkeypatch):
         seen["cmd"] = cmd
         seen["cwd"] = kwargs.get("cwd")
         seen["env"] = kwargs.get("env") or {}
+        seen["timeout"] = kwargs.get("timeout")
 
         class Result:
             returncode = 0
@@ -240,6 +241,9 @@ def test_run_playbooks_graph_invokes_agentflow(tmp_path, monkeypatch):
     shim_dir = str(tmp_path / "ws" / ".midkernel" / "bin")
     assert seen["env"]["PATH"].split(os.pathsep)[0] == shim_dir
     assert seen["env"].get("KIMI_SHARE_DIR") == str(tmp_path / "ws" / ".midkernel" / "kimi")
+    assert seen["timeout"] == cfg.run_timeout_seconds
+    assert seen["timeout"] > cfg.timeout_seconds
+    assert seen["timeout"] > 900
 
 
 def test_run_playbooks_graph_prefers_ecs_in_task(tmp_path, monkeypatch):
@@ -257,6 +261,7 @@ def test_run_playbooks_graph_prefers_ecs_in_task(tmp_path, monkeypatch):
 
     def fake_run(cmd, **kwargs):
         seen["cmd"] = cmd
+        seen["timeout"] = kwargs.get("timeout")
 
         class Result:
             returncode = 0
@@ -270,6 +275,39 @@ def test_run_playbooks_graph_prefers_ecs_in_task(tmp_path, monkeypatch):
         clone=lambda _c, _d: playbooks,
     )
     assert seen["cmd"] == ["bash", str(helper)]
+    assert seen["timeout"] == cfg.run_timeout_seconds
+    assert seen["timeout"] == 30 * 60 * 12 + 15 * 60
+
+
+def test_run_playbooks_graph_timeout_expired_is_graph_error(tmp_path, monkeypatch):
+    """cmtuschdc0003lb04ktzewa7k: TimeoutExpired on ecs-in-task.sh is the wall clock."""
+    _isolate_os_graph_env(monkeypatch)
+    playbooks = tmp_path / "playbooks"
+    (playbooks / "pipelines").mkdir(parents=True)
+    (playbooks / "pipelines" / "goal-security-review.py").write_text("print('ok')\n")
+    helper = playbooks / "scripts"
+    helper.mkdir()
+    script = helper / "ecs-in-task.sh"
+    script.write_text("#!/bin/bash\nexit 0\n")
+    script.chmod(0o755)
+    cfg = _cfg(
+        WORKDIR=str(tmp_path / "ws"),
+        OUTPUTS_DIR=str(tmp_path / "out"),
+        SCAN_PROFILE="low",
+    )
+    assert cfg.timeout_seconds == 15 * 60
+    assert cfg.run_timeout_seconds == 11700
+
+    def boom(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs["timeout"])
+
+    with pytest.raises(GraphError, match="run timeout 11700s"):
+        run_playbooks_graph(
+            cfg,
+            run=boom,
+            which=lambda name: "/usr/bin/agentflow",
+            clone=lambda _c, _d: playbooks,
+        )
 
 
 def test_run_playbooks_graph_requires_agentflow():
