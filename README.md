@@ -142,8 +142,8 @@ Aligned with `midkernel/app` `src/lib/agentflow-contract.ts`. App names and runn
 | `GITHUB_NAME` | yes (clone) | — | |
 | `PLAYBOOK_SLUG` | no | `PLAYBOOK` | default `security-review` |
 | `SCAN_PROFILE` | no | `PROFILE` | `low` \| `balanced` \| `max` |
-| `AGENT_TIMEOUT_SECONDS` | no | — | **per-node** kimi / review budget. Default `PROFILE_TIMEOUT_SECONDS` (`low`=1800, `balanced`=1800, `max`=3600). Playbooks GOAL nodes use the same profile table independently. QA `cmtutkn8k0003id04hs5s8j7z` hunter-1 died exit 124 after 900s once runner#12's 11700s wall clock held. |
-| `AGENT_RUN_TIMEOUT_SECONDS` | no | — | **whole-run** wall clock for `ecs-in-task.sh` / `agentflow run`. Default is `node_timeout * serial_kimi_node_budget + 900` (prepare 10m + publish 5m). GOAL serial budget is 6 fixed kimi nodes + `GOAL_COUNT` hunters (default 12). Do **not** set this to 900 on `goal-security-review`: QA `cmtuschdc0003lb04ktzewa7k` (low, DeepSeek) died at exactly 900s (`00:25:27Z` → `00:40:27Z` `TimeoutExpired`) after threat-model ~9m + goal-author ~4.5m left ~82s for surface-split. |
+| `AGENT_TIMEOUT_SECONDS` | no | — | **per-node hard** kimi / review budget. Default `PROFILE_TIMEOUT_SECONDS` (`low`=1800 / 30m, `balanced`=3600 / 1h, `max`=7200 / 2h). Playbooks GOAL nodes use the same profile table independently. UI may set this per run as the hard ceiling; playbooks' **soft** cutoff is 90% of that hard value (empty RESULT + continue, not a hard kill). QA `cmtutkn8k0003id04hs5s8j7z` hunter-1 died exit 124 after 900s once runner#12's 11700s wall clock held. James lock 2026-09-10 / QA `cmtuvv61w0003gm0az74grqv2`: 1800s hard held but hunter emptied RESULT and `fail_fast` killed GOAL — `fail_fast` is playbooks-owned; runner does not inject it. |
+| `AGENT_RUN_TIMEOUT_SECONDS` | no | — | **whole-run** wall clock for `ecs-in-task.sh` / `agentflow run`. Default is `node_timeout * serial_kimi_node_budget + 900` (prepare 10m + publish 5m). GOAL serial budget is 6 fixed kimi nodes + `GOAL_COUNT` hunters (default 12). UI may override this per run. Do **not** set this to 900 on `goal-security-review`: QA `cmtuschdc0003lb04ktzewa7k` (low, DeepSeek) died at exactly 900s (`00:25:27Z` → `00:40:27Z` `TimeoutExpired`) after threat-model ~9m + goal-author ~4.5m left ~82s for surface-split. |
 | `THREAT_PIN` | no | `THREAT` | max 80 chars |
 | `GITHUB_REF` | no | — | shallow clone `--branch` |
 | `GITHUB_TOKEN` | no | — | per-run installation token |
@@ -166,11 +166,11 @@ A **generic** agentflow node (no `RUN_ID`) still runs `kimi` with OpenRouter if 
 
 `examples/task-definition.json` / `examples/runtask.json`. Family `midkernel-dev-scan` or app-registered `midkernel-agentflow-agents`. Logs: `/agentflow`. Capacity: Fargate Spot preferred.
 
-| Profile | cpu | memory | per-node timeout | GOAL whole-run default (`GOAL_COUNT=6`) |
+| Profile | cpu | memory | per-node hard timeout | GOAL whole-run default (`GOAL_COUNT=6`) |
 | --- | --- | --- | --- | --- |
-| `low` | `1024` | `2048` | 30 min | 6h 15m (`1800s × 12 + 900s`) |
-| `balanced` | `2048` | `4096` | 30 min | 6h 15m |
-| `max` | `4096` | `8192` | 60 min | 12h 15m |
+| `low` | `1024` | `2048` | 30 min (`1800s`) | 6h 15m (`1800s × 12 + 900s`) |
+| `balanced` | `2048` | `4096` | 1 h (`3600s`) | 12h 15m (`3600s × 12 + 900s`) |
+| `max` | `4096` | `8192` | 2 h (`7200s`) | 24h 15m (`7200s × 12 + 900s`) |
 
 When the app RunTasks **without** a command override and `RUN_ID` is set, `CMD midkernel-default` execs `midkernel-runner` **without** an entrypoint clone-prepare. Runner then runs the graph when `pipelines/<PLAYBOOK>.py` exists (clone playbooks → `agentflow run` → `graph.json` + `nodes/*` + `report.md`). Native agentflow overrides that with `bash -c` + `kimi`.
 

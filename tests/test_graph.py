@@ -125,6 +125,10 @@ def test_apply_graph_env_exports_contract(tmp_path, monkeypatch):
     assert env["PATH"].split(os.pathsep)[0] == str(shim.parent)
     assert env["KIMI_SHARE_DIR"] == str(tmp_path / "ws" / ".midkernel" / "kimi")
     assert "OPENROUTER_API_KEY" not in env
+    # Hunter node failure continues the workflow. Playbooks graph is source of
+    # truth for fail_fast (QA cmtuvv61w0003gm0az74grqv2).
+    assert not any("fail_fast" in key.lower() for key in env)
+    assert env.get("AGENTFLOW_FAIL_FAST") is None
 
 
 def test_apply_graph_env_exports_openrouter_for_kimi_bin(tmp_path):
@@ -244,6 +248,11 @@ def test_run_playbooks_graph_invokes_agentflow(tmp_path, monkeypatch):
     assert seen["timeout"] == cfg.run_timeout_seconds
     assert seen["timeout"] > cfg.timeout_seconds
     assert seen["timeout"] > 900
+    # Playbooks graph owns fail_fast. Runner must not abort GOAL on hunter fail
+    # (James lock 2026-09-10 / QA cmtuvv61w0003gm0az74grqv2).
+    assert not any("fail_fast" in str(part).lower() for part in seen["cmd"])
+    fail_fast_keys = [key for key in seen["env"] if "fail_fast" in key.lower()]
+    assert fail_fast_keys == []
 
 
 def test_run_playbooks_graph_prefers_ecs_in_task(tmp_path, monkeypatch):
@@ -276,7 +285,9 @@ def test_run_playbooks_graph_prefers_ecs_in_task(tmp_path, monkeypatch):
     )
     assert seen["cmd"] == ["bash", str(helper)]
     assert seen["timeout"] == cfg.run_timeout_seconds
-    assert seen["timeout"] == 30 * 60 * 12 + 15 * 60
+    # Default SCAN_PROFILE is balanced (1h hard) → GOAL wall 3600×12+900.
+    assert seen["timeout"] == 60 * 60 * 12 + 15 * 60
+    assert seen["timeout"] == 44100
 
 
 def test_run_playbooks_graph_timeout_expired_is_graph_error(tmp_path, monkeypatch):
