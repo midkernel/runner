@@ -58,6 +58,9 @@ def test_export_sets_openai_key_for_legacy_provider():
     assert env["KIMI_MODEL_MAX_COMPLETION_TOKENS"] == str(DEFAULT_MAX_TOKENS)
     assert env["KIMI_MAX_TOKENS"] == str(DEFAULT_MAX_TOKENS)
     assert env["OPENROUTER_MAX_TOKENS"] == str(DEFAULT_MAX_TOKENS)
+    assert env["MIDKERNEL_OPENROUTER_429_RETRIES"] == "8"
+    assert env["MIDKERNEL_OPENROUTER_RPM"] == "12"
+    assert "CONCURRENCY" not in env
     assert "AI_GATEWAY_API_KEY" not in env
 
 

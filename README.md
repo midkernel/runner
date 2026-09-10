@@ -107,7 +107,7 @@ Uploaded via the task role (`s3:PutObject`, SSE-S3). Helpers:
   - `KIMI_SHARE_DIR=$WORKDIR/.midkernel/kimi` + OpenRouter `config.toml`
   - `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENROUTER_API_KEY` (`openai_legacy`)
   - `KIMI_API_KEY` / `KIMI_BASE_URL` / `KIMI_MODEL_NAME` (kimi-cli 1.49 dummy `type=kimi` fallback if `--config` still misses)
-  - **`max_tokens = 16384`** on every model alias (never 131072). GOAL `cmtufzqzo0003k004mt2w0m9c` hunters 402'd `in_flight_budget_exhausted` because kimi-cli 1.49 `openai_legacy` omitted `max_tokens` and OpenRouter reserved the model max (131072; wallet could afford ~68k–120k). QA `cmtulxq7v0003l2046bhhc3yl` surface-split then 402'd `openrouter_key_limit` with `max_tokens=32768` on the wire (James `$10`/mo key could afford ~13k–25k). The front does **not** copy `max_context_size` (262144) into `max_tokens`. Override via first-wins `MIDKERNEL_OPENROUTER_MAX_TOKENS` / `OPENROUTER_MAX_TOKENS` / `KIMI_MAX_TOKENS` / `KIMI_MODEL_MAX_TOKENS` / `KIMI_MODEL_MAX_COMPLETION_TOKENS` (hard allowed max 65536; any value `>65536` or `>=131072` → 16384, not `min(value, 65536)`). Playbooks `prepare` / `render_kimi_openrouter_config` write the same `max_tokens = 16384` line — keep it in lockstep. If wrap_kimi already set `OPENAI_BASE_URL` / config `base_url` to a localhost injection proxy, kimi-openrouter **must not** rewrite it to `https://openrouter.ai/api/v1`. sitecustomize / OpenAILegacy patch **fails loud** if it does not install, strips `max_completion_tokens`, and always sets outbound `max_tokens` to the clamped value.
+  - **`max_tokens = 16384`** on every model alias (never 131072). GOAL `cmtufzqzo0003k004mt2w0m9c` hunters 402'd `in_flight_budget_exhausted` because kimi-cli 1.49 `openai_legacy` omitted `max_tokens` and OpenRouter reserved the model max (131072; wallet could afford ~68k–120k). QA `cmtulxq7v0003l2046bhhc3yl` surface-split then 402'd `openrouter_key_limit` with `max_tokens=32768` on the wire (James `$10`/mo key could afford ~13k–25k). The front does **not** copy `max_context_size` (262144) into `max_tokens`. Override via first-wins `MIDKERNEL_OPENROUTER_MAX_TOKENS` / `OPENROUTER_MAX_TOKENS` / `KIMI_MAX_TOKENS` / `KIMI_MODEL_MAX_TOKENS` / `KIMI_MODEL_MAX_COMPLETION_TOKENS` (hard allowed max 65536; any value `>65536` or `>=131072` → 16384, not `min(value, 65536)`). Playbooks `prepare` / `render_kimi_openrouter_config` write the same `max_tokens = 16384` line — keep it in lockstep. If wrap_kimi already set `OPENAI_BASE_URL` / config `base_url` to a localhost injection proxy, kimi-openrouter **must not** rewrite it to `https://openrouter.ai/api/v1`. sitecustomize / OpenAILegacy patch **fails loud** if it does not install, strips `max_completion_tokens`, and always sets outbound `max_tokens` to the clamped value. The same sitecustomize installs **429 Retry-After** (8 tries / 90s) and a **12 RPM** shared throttle so GOAL `concurrency>1` is safer than the #12 serial workaround. Account 20 RPM (`openrouter_new_account`) is dashboard-only — see [OpenRouter 429 RPM](#openrouter-429-rpm-goal-hunter-fan-out).
 
 **Playbooks coordination:** `_node_io.graph_runtime_env()` / `kimi_io_env()` do not need to strip these keys (LocalRunner copies `os.environ` then overlays node env). Harden playbooks by passing `KIMI_SHARE_DIR`, `KIMI_BASE_URL`, `KIMI_MODEL_NAME`, `OPENAI_*`, and `OPENROUTER_*` through node env. Separately, playbooks `extra_args=["--config", …]` only defines `models.midkernel` while agentflow adds `--model moonshotai/kimi-k3` — that mismatch is what produced `LLM not set` on `cmtudf0470003jp040742shv6` / `cmtudm8f20003i90462yr3vxq`. Runner now covers the fallback; playbooks should still add the OpenRouter slug aliases (or drop the mismatched `--model`) so `--config` itself resolves.
 - After cloning playbooks, runner `chmod +x` + `--version` short-circuit on `pipelines/_node_io.py` so agentflow `kimi_ready` (`<executable> --version` in the prepared local shell) execs `MIDKERNEL_KIMI_BIN` instead of wrap_kimi. PATH `kimi --version` also execs the real binary with no prepare/publish
@@ -152,6 +152,9 @@ Aligned with `midkernel/app` `src/lib/agentflow-contract.ts`. App names and runn
 | `ARTIFACTS_KEY` | no | — | exact S3 key if the app sets it |
 | `OPENROUTER_MODEL` | no | `MODEL` | default `google/gemini-3.8-flash` (Pareto `balanced`) |
 | `OPENROUTER_MAX_TOKENS` | no | first-wins: `MIDKERNEL_OPENROUTER_MAX_TOKENS`, `OPENROUTER_MAX_TOKENS`, `KIMI_MAX_TOKENS`, `KIMI_MODEL_MAX_TOKENS`, `KIMI_MODEL_MAX_COMPLETION_TOKENS` | in-task default **16384**, hard allowed max **65536**; `>65536` or `>=131072` → 16384 (not `min(value, 65536)`) |
+| `CONCURRENCY` | no | first-wins: `CONCURRENCY`, `AGENTFLOW_CONCURRENCY`, `GRAPH_CONCURRENCY`, `MIDKERNEL_CONCURRENCY` | Graph slot override for playbooks / agentflow (1–6). Runner **passes through** the app value onto all four names; it does **not** invent a default. Playbooks `goal-security-review` still reads `GOAL_COUNT` for hunter count / `Graph(concurrency=N)` unless it also honors this override. `security-review` stays linear. |
+| `MIDKERNEL_OPENROUTER_429_RETRIES` | no | `OPENROUTER_429_RETRIES` | Default **8** (cap 16). OpenAILegacy + sitecustomize retry **429** only (never 402), honoring `Retry-After` through **90s** or exponential backoff 1s…90s. Lockstep with playbooks `wrap_kimi`. |
+| `MIDKERNEL_OPENROUTER_RPM` | no | `OPENROUTER_RPM` | Default **12** shared chat/completions slots per minute (under new-account 20 RPM). File lock at `$WORKDIR/.midkernel/openrouter-rpm.lock` so parallel GOAL hunters do not burst. **0** disables. Cannot raise the OpenRouter account cap. |
 | `AWS_REGION` | no | — | default `us-east-1` |
 | `OPENROUTER_SECRET_ID` | no | — | `midkernel/dev/harness/openrouter-api-key` |
 | `GITHUB_TOKEN_SECRET_ID` | no | — | `midkernel/dev/harness/github-token` |
@@ -161,6 +164,26 @@ Aligned with `midkernel/app` `src/lib/agentflow-contract.ts`. App names and runn
 | `MIDKERNEL_REQUIRE_REPORT` | no | — | `0` on the graph path so PATH `kimi` / BASH_ENV do not require `report.md` after every node |
 
 A **generic** agentflow node (no `RUN_ID`) still runs `kimi` with OpenRouter if a key is already in the environment.
+
+### OpenRouter 429 RPM (GOAL hunter fan-out)
+
+Run `cmtun51000003l704q7lyyjrf` died `exit 75` with `limit_source=openrouter_new_account` — **20 requests/minute** on `moonshotai/kimi-k3` when six hunters hit OpenRouter at once. That RPM is **account-level**. Runner / playbooks can only throttle and retry; they cannot raise it.
+
+**What this image does (client):**
+
+1. Shared **12 RPM** throttle across in-task kimi processes (override `MIDKERNEL_OPENROUTER_RPM`; `0` off).
+2. **429** retries on the OpenAILegacy client (sitecustomize): 8 tries, `Retry-After` through 90s, else 1s…90s backoff. Never retry **402**.
+3. Pass `CONCURRENCY` / `AGENTFLOW_CONCURRENCY` / `GRAPH_CONCURRENCY` / `MIDKERNEL_CONCURRENCY` from the app task env into the playbooks graph process. App should set `CONCURRENCY` (2 is safer than 6 on a new-account key) if playbooks honors it.
+
+**What James must change in the OpenRouter dashboard** (this is the only way past 20 RPM):
+
+1. Open [openrouter.ai/settings/credits](https://openrouter.ai/settings/credits) on the **same account** as `midkernel/dev/harness/openrouter-api-key`.
+2. Confirm lifetime purchased credits and that the key is not stuck on `is_free_tier` / `openrouter_new_account`. New-account 20 RPM is not a per-key slider — extra API keys do **not** add RPM ([OpenRouter limits](https://openrouter.ai/docs/api/reference/limits)).
+3. Buy credits if the wallet is at $0 / the $10/mo key cap that already 402'd `cmtulxq7v0003l2046bhhc3yl`. Paid (non-`:free`) models have no **platform** request cap once the account is off the new-account limiter; upstream providers can still 429.
+4. Open [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) → the harness key → confirm there is no extra per-key spend/rate pin that would 402/429 a GOAL fan-out.
+5. There is **no** dashboard control to set RPM to 60. If `GET https://openrouter.ai/api/v1/key` still shows a new-account / free-tier limiter after credits post, email OpenRouter support and ask them to lift `openrouter_new_account` on this account. Until that lifts, keep `CONCURRENCY` at 2 and the 12 RPM throttle on.
+
+Do **not** start a new Scan to verify this. Unit tests cover the client throttle/retry and CONCURRENCY passthrough.
 
 ## Suggested ECS task definition
 

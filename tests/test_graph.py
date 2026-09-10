@@ -34,6 +34,14 @@ _GRAPH_ENV_KEYS = (
     "KIMI_MAX_TOKENS",
     "OPENROUTER_MAX_TOKENS",
     "MIDKERNEL_OPENROUTER_MAX_TOKENS",
+    "CONCURRENCY",
+    "AGENTFLOW_CONCURRENCY",
+    "GRAPH_CONCURRENCY",
+    "MIDKERNEL_CONCURRENCY",
+    "MIDKERNEL_OPENROUTER_429_RETRIES",
+    "OPENROUTER_429_RETRIES",
+    "MIDKERNEL_OPENROUTER_RPM",
+    "OPENROUTER_RPM",
     "OPENROUTER_API_KEY",
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
@@ -129,6 +137,23 @@ def test_apply_graph_env_exports_contract(tmp_path, monkeypatch):
     # truth for fail_fast (QA cmtuvv61w0003gm0az74grqv2).
     assert not any("fail_fast" in key.lower() for key in env)
     assert env.get("AGENTFLOW_FAIL_FAST") is None
+    assert env.get("CONCURRENCY") is None
+    assert env["MIDKERNEL_OPENROUTER_429_RETRIES"] == "8"
+    assert env["MIDKERNEL_OPENROUTER_RPM"] == "12"
+
+
+def test_apply_graph_env_passes_app_concurrency_override(tmp_path):
+    """App CONCURRENCY / AGENTFLOW_CONCURRENCY must reach playbooks Graph()."""
+    cfg = _cfg(WORKDIR=str(tmp_path / "ws"), OUTPUTS_DIR=str(tmp_path / "out"))
+    env = apply_graph_env(
+        cfg,
+        environ={"AGENTFLOW_CONCURRENCY": "2", "GOAL_COUNT": "6", "PATH": "/usr/bin"},
+    )
+    assert env["CONCURRENCY"] == "2"
+    assert env["AGENTFLOW_CONCURRENCY"] == "2"
+    assert env["GRAPH_CONCURRENCY"] == "2"
+    assert env["MIDKERNEL_CONCURRENCY"] == "2"
+    assert env["GOAL_COUNT"] == "6"
 
 
 def test_apply_graph_env_exports_openrouter_for_kimi_bin(tmp_path):
