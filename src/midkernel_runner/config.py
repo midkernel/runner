@@ -29,6 +29,9 @@ OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 
+# Per-node kimi / review budget. Playbooks `_midkernel.py` uses the same
+# table for each GOAL hunter / judge. Do not reuse this as the ecs-in-task
+# wall clock — GOAL is a long serial graph.
 PROFILE_TIMEOUT_SECONDS = {
     "low": 15 * 60,
     "balanced": 30 * 60,
@@ -41,6 +44,22 @@ PROFILE_FARGATE = {
     "balanced": {"cpu": "2048", "memory": "4096"},
     "max": {"cpu": "4096", "memory": "8192"},
 }
+
+# Playbooks graphs: prepare shell (10m) + publish shell (5m).
+GRAPH_SHELL_OVERHEAD_SECONDS = 15 * 60
+
+# goal-security-review serial kimi nodes besides hunter-1..N:
+# threat-model, goal-author, surface-split, judge-a, judge-b, assemble.
+# Hunters are a depends_on chain (never parallel). QA
+# cmtuschdc0003lb04ktzewa7k: PROFILE_TIMEOUT_SECONDS["low"]=900 was applied
+# as AGENT_TIMEOUT_SECONDS for the entire ecs-in-task.sh. prepare +
+# threat-model (~9m) + goal-author (~4.5m) left ~82s; surface-split was
+# killed at exactly 900s (00:25:27Z → 00:40:27Z TimeoutExpired). Not an
+# OpenRouter 402/429 and not a hang — the whole-run budget was one node.
+GOAL_SECURITY_REVIEW_SLUG = "goal-security-review"
+GOAL_FIXED_SERIAL_KIMI_NODES = 6
+DEFAULT_GOAL_COUNT = 6
+MAX_GOAL_HUNTERS = 6
 
 THREAT_PIN_MAX_LENGTH = 80
 
@@ -70,6 +89,7 @@ class RunConfig:
     workdir: str
     outputs_dir: str
     timeout_seconds: int
+    run_timeout_seconds: int
     artifacts_key_override: str | None = None
 
     @property
@@ -121,6 +141,54 @@ def _first(env: dict[str, str | None], *names: str, default: str | None = None) 
     return default
 
 
+def _positive_int(name: str, raw: str | None, default: int) -> int:
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = int(str(raw).strip())
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a positive integer") from exc
+    if value < 1:
+        raise ConfigError(f"{name} must be a positive integer")
+    return value
+
+
+def parse_goal_count(raw: str | None) -> int:
+    """Playbooks GOAL_COUNT (default 6, max 6). Invalid values fall back."""
+    if raw is None or not str(raw).strip():
+        return DEFAULT_GOAL_COUNT
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        return DEFAULT_GOAL_COUNT
+    return max(1, min(value, MAX_GOAL_HUNTERS))
+
+
+def serial_kimi_node_budget(playbook_slug: str, hunters: int = DEFAULT_GOAL_COUNT) -> int:
+    """How many serial kimi nodes the in-task graph can run.
+
+    Single-review playbooks: one kimi node. GOAL: fixed kimi nodes plus
+    hunter-1..N on a depends_on chain (playbooks must not fan out).
+    """
+    if playbook_slug == GOAL_SECURITY_REVIEW_SLUG:
+        return GOAL_FIXED_SERIAL_KIMI_NODES + max(1, min(hunters, MAX_GOAL_HUNTERS))
+    return 1
+
+
+def default_run_timeout_seconds(
+    node_timeout: int,
+    playbook_slug: str,
+    hunters: int = DEFAULT_GOAL_COUNT,
+) -> int:
+    """Whole-run wall clock for ``ecs-in-task.sh`` / ``agentflow run``.
+
+    A single profile timeout (900s on low) is enough for one kimi node, not
+    for GOAL. ``node_timeout * serial_kimi_node_budget + prepare/publish``
+    is the budget that lets later nodes start after threat-model + goal-author.
+    """
+    return node_timeout * serial_kimi_node_budget(playbook_slug, hunters) + GRAPH_SHELL_OVERHEAD_SECONDS
+
+
 def load_optional_run_context(environ: dict[str, str] | None = None) -> dict[str, str] | None:
     """Return a context dict when Midkernel scan env is present; else None.
 
@@ -167,7 +235,18 @@ def load_config(environ: dict[str, str] | None = None) -> RunConfig:
     if "/" not in model:
         raise ConfigError("OPENROUTER_MODEL must be vendor/model (e.g. google/gemini-3.8-flash)")
 
-    timeout = int(_optional("AGENT_TIMEOUT_SECONDS", env, str(PROFILE_TIMEOUT_SECONDS[profile])) or PROFILE_TIMEOUT_SECONDS[profile])
+    node_timeout = _positive_int(
+        "AGENT_TIMEOUT_SECONDS",
+        _optional("AGENT_TIMEOUT_SECONDS", env),
+        PROFILE_TIMEOUT_SECONDS[profile],
+    )
+    hunters = parse_goal_count(_optional("GOAL_COUNT", env))
+    computed_run = default_run_timeout_seconds(node_timeout, slug, hunters)
+    run_timeout = _positive_int(
+        "AGENT_RUN_TIMEOUT_SECONDS",
+        _optional("AGENT_RUN_TIMEOUT_SECONDS", env),
+        computed_run,
+    )
 
     return RunConfig(
         run_id=run_id,
@@ -189,6 +268,7 @@ def load_config(environ: dict[str, str] | None = None) -> RunConfig:
         github_ref=_optional("GITHUB_REF", env),
         workdir=_optional("WORKDIR", env, "/workspace") or "/workspace",
         outputs_dir=_optional("OUTPUTS_DIR", env, "/outputs") or "/outputs",
-        timeout_seconds=timeout,
+        timeout_seconds=node_timeout,
+        run_timeout_seconds=run_timeout,
         artifacts_key_override=_optional("ARTIFACTS_KEY", env),
     )

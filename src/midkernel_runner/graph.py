@@ -292,20 +292,30 @@ def run_playbooks_graph(
         cmd = [agentflow, "run", str(pipeline)]
         cwd = str(root)
     LOG.info(
-        "agentflow graph playbook=%s pipeline=%s workdir=%s node_io=%s target=%s",
+        "agentflow graph playbook=%s pipeline=%s workdir=%s node_io=%s target=%s "
+        "run_timeout=%ss node_timeout=%ss",
         config.playbook_slug,
         pipeline,
         config.workdir,
         os.environ.get("MIDKERNEL_NODE_IO"),
         os.environ.get("MIDKERNEL_AGENTFLOW_TARGET"),
+        config.run_timeout_seconds,
+        config.timeout_seconds,
     )
-    result = run(
-        cmd,
-        check=False,
-        cwd=cwd,
-        env=os.environ.copy(),
-        timeout=config.timeout_seconds,
-    )
+    try:
+        result = run(
+            cmd,
+            check=False,
+            cwd=cwd,
+            env=os.environ.copy(),
+            timeout=config.run_timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise GraphError(
+            f"playbooks graph exceeded run timeout {config.run_timeout_seconds}s "
+            f"(per-node {config.timeout_seconds}s; "
+            f"{config.playbook_slug} is a serial graph, not one kimi call)"
+        ) from exc
     code = int(result.returncode)
     if code != 0:
         raise GraphError(f"playbooks graph exited {code}")

@@ -48,13 +48,16 @@ def run() -> int:
         return 2
 
     LOG.info(
-        "start run_id=%s repo=%s/%s playbook=%s profile=%s model=%s harness=kimi",
+        "start run_id=%s repo=%s/%s playbook=%s profile=%s model=%s harness=kimi "
+        "node_timeout=%ss run_timeout=%ss",
         config.run_id,
         config.github_owner,
         config.github_name,
         config.playbook_slug,
         config.scan_profile,
         config.openrouter_model,
+        config.timeout_seconds,
+        config.run_timeout_seconds,
     )
     LOG.info("artifacts dest %s", config.s3_uri)
 
