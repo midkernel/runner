@@ -34,6 +34,8 @@ def test_defaults():
     assert cfg.openrouter_model == "google/gemini-3.8-flash"
     assert cfg.openrouter_secret_id == "midkernel/dev/harness/openrouter-api-key"
     assert cfg.github_secret_id == "midkernel/dev/harness/github-token"
+    assert cfg.timeout_seconds == 3600
+    assert cfg.run_timeout_seconds == 3600 + GRAPH_SHELL_OVERHEAD_SECONDS
 
 
 def test_profile_timeout_and_threat():
@@ -48,16 +50,28 @@ def test_profile_timeout_and_threat():
 def test_low_profile_node_timeout_is_1800():
     """QA cmtutkn8k0003id04hs5s8j7z: hunter-1 exit 124 after 900s."""
     assert PROFILE_TIMEOUT_SECONDS["low"] == 1800
-    assert PROFILE_TIMEOUT_SECONDS["low"] == PROFILE_TIMEOUT_SECONDS["balanced"]
-    assert PROFILE_TIMEOUT_SECONDS["max"] == 60 * 60
     cfg = load_config(_base(SCAN_PROFILE="low"))
     assert cfg.timeout_seconds == 1800
 
 
+def test_profile_hard_budgets_james_lock():
+    """James lock 2026-09-10 / QA cmtuvv61w0003gm0az74grqv2: raise balanced/max hard."""
+    assert PROFILE_TIMEOUT_SECONDS["low"] == 30 * 60
+    assert PROFILE_TIMEOUT_SECONDS["balanced"] == 60 * 60
+    assert PROFILE_TIMEOUT_SECONDS["max"] == 2 * 60 * 60
+    assert PROFILE_TIMEOUT_SECONDS["low"] != PROFILE_TIMEOUT_SECONDS["balanced"]
+    balanced = load_config(_base(SCAN_PROFILE="balanced"))
+    maximum = load_config(_base(SCAN_PROFILE="max"))
+    assert balanced.timeout_seconds == 3600
+    assert balanced.run_timeout_seconds == 3600 + GRAPH_SHELL_OVERHEAD_SECONDS
+    assert maximum.timeout_seconds == 7200
+    assert maximum.run_timeout_seconds == 7200 + GRAPH_SHELL_OVERHEAD_SECONDS
+
+
 def test_max_timeout():
     cfg = load_config(_base(SCAN_PROFILE="max"))
-    assert cfg.timeout_seconds == 60 * 60
-    assert cfg.run_timeout_seconds == 60 * 60 + GRAPH_SHELL_OVERHEAD_SECONDS
+    assert cfg.timeout_seconds == 2 * 60 * 60
+    assert cfg.run_timeout_seconds == 2 * 60 * 60 + GRAPH_SHELL_OVERHEAD_SECONDS
 
 
 def test_missing_run_id():
@@ -188,12 +202,17 @@ def test_agent_run_timeout_overrides_computed_wall_clock():
 
 
 def test_balanced_and_max_goal_scale_with_profile():
+    """Whole-run wall = node_timeout × serial kimi budget + overhead (James lock)."""
     balanced = load_config(_base(SCAN_PROFILE="balanced", PLAYBOOK="goal-security-review"))
     maximum = load_config(_base(SCAN_PROFILE="max", PLAYBOOK="goal-security-review"))
-    assert balanced.timeout_seconds == 30 * 60
-    assert balanced.run_timeout_seconds == 30 * 60 * 12 + GRAPH_SHELL_OVERHEAD_SECONDS
-    assert maximum.timeout_seconds == 60 * 60
-    assert maximum.run_timeout_seconds == 60 * 60 * 12 + GRAPH_SHELL_OVERHEAD_SECONDS
+    assert balanced.timeout_seconds == 60 * 60
+    assert balanced.run_timeout_seconds == 60 * 60 * 12 + GRAPH_SHELL_OVERHEAD_SECONDS
+    assert balanced.run_timeout_seconds == 44100
+    assert maximum.timeout_seconds == 2 * 60 * 60
+    assert maximum.run_timeout_seconds == 2 * 60 * 60 * 12 + GRAPH_SHELL_OVERHEAD_SECONDS
+    assert maximum.run_timeout_seconds == 87300
+    assert default_run_timeout_seconds(PROFILE_TIMEOUT_SECONDS["balanced"], "goal-security-review") == 44100
+    assert default_run_timeout_seconds(PROFILE_TIMEOUT_SECONDS["max"], "goal-security-review") == 87300
 
 
 def test_invalid_timeout_env_rejected():

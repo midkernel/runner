@@ -291,6 +291,10 @@ def run_playbooks_graph(
     else:
         cmd = [agentflow, "run", str(pipeline)]
         cwd = str(root)
+    # Do not add fail_fast / abort-on-node-error here. Playbooks GOAL
+    # continues after a hunter failure (QA cmtuvv61w0003gm0az74grqv2).
+    # Soft timeout (90% of AGENT_TIMEOUT_SECONDS / profile hard) is
+    # playbooks-owned; this wrapper only enforces the whole-run wall.
     LOG.info(
         "agentflow graph playbook=%s pipeline=%s workdir=%s node_io=%s target=%s "
         "run_timeout=%ss node_timeout=%ss",

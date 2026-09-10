@@ -29,18 +29,24 @@ OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 
-# Per-node kimi / review budget. Playbooks `_midkernel.py` uses the same
-# table for each GOAL hunter / judge. Do not reuse this as the ecs-in-task
-# wall clock — GOAL is a long serial graph.
+# Per-node kimi / review budget (hard). Playbooks `_midkernel.py` uses the
+# same table for each GOAL hunter / judge. Do not reuse this as the
+# ecs-in-task wall clock — GOAL is a long serial graph.
 # QA cmtutkn8k0003id04hs5s8j7z (low, DeepSeek): runner#12 whole-run
 # budget held (run_timeout=11700s, no TimeoutExpired on ecs-in-task),
 # but hunter-1 died exit 124 after 900s (`Timed out after 900s`) with
 # no output.md / RESULT.md. Hunters 2–6 skipped (serial). Raise low
 # to the former balanced node budget so each hunter gets 30m.
+# James lock 2026-09-10 (companion to playbooks soft-timeout): QA
+# cmtuvv61w0003gm0az74grqv2 had node_timeout=1800 held; hunter still
+# emptied RESULT and fail_fast killed GOAL. Raise balanced to 1h and
+# max to 2h so the profile table is the UI/profile hard ceiling. Soft
+# cutoff is playbooks' 90% of that hard value — runner does not compute
+# it and does not inject fail_fast (playbooks graph is source of truth).
 PROFILE_TIMEOUT_SECONDS = {
     "low": 30 * 60,
-    "balanced": 30 * 60,
-    "max": 60 * 60,
+    "balanced": 60 * 60,
+    "max": 2 * 60 * 60,
 }
 
 # Suggested Fargate sizes for Eng/IT (documented, not enforced here).
@@ -197,9 +203,11 @@ def default_run_timeout_seconds(
 ) -> int:
     """Whole-run wall clock for ``ecs-in-task.sh`` / ``agentflow run``.
 
-    A single profile timeout (1800s on low) is enough for one kimi node, not
-    for GOAL. ``node_timeout * serial_kimi_node_budget + prepare/publish``
-    is the budget that lets later nodes start after threat-model + goal-author.
+    A single profile timeout (1800s on low, 3600s balanced, 7200s max) is
+    enough for one kimi node, not for GOAL. ``node_timeout *
+    serial_kimi_node_budget + prepare/publish`` is the budget that lets
+    later nodes start after threat-model + goal-author. Balanced/max GOAL
+    walls grow with the James-lock node budgets (1h / 2h).
     """
     return node_timeout * serial_kimi_node_budget(playbook_slug, hunters) + GRAPH_SHELL_OVERHEAD_SECONDS
 
