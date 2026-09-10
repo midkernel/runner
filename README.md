@@ -72,11 +72,27 @@ When `RUN_ID` is set and midkernel/playbooks has ``pipelines/<PLAYBOOK>.py``, **
 
 ```text
 s3://midkernel-dev-artifacts/runs/<RUN_ID>/report.md
+s3://midkernel-dev-artifacts/runs/<RUN_ID>/openrouter-generations.json
 s3://midkernel-dev-artifacts/runs/<RUN_ID>/graph.json
 s3://midkernel-dev-artifacts/runs/<RUN_ID>/nodes/<nodeId>/prompt.md
 s3://midkernel-dev-artifacts/runs/<RUN_ID>/nodes/<nodeId>/output.md
 s3://midkernel-dev-artifacts/runs/<RUN_ID>/nodes/<nodeId>/meta.json
 ```
+
+**OpenRouter generation ids (app#45 observe):** the Kimi/OpenRouter path records official `gen-…` ids only (response `id`, `X-Generation-Id`, kimi stream-json API-shaped events). After a Scan they are written next to `report.md` as `openrouter-generations.json` and uploaded to the same S3 prefix. Field names lockstep with app `Run.openrouterGenerationIds` and event `generationId` / `generationIds`:
+
+```json
+{
+  "runId": "<RUN_ID>",
+  "source": "openrouter",
+  "generationId": "gen-…",
+  "generationIds": ["gen-…"],
+  "openrouterGenerationIds": ["gen-…"],
+  "nodes": [{"nodeId": "review", "generationId": "gen-…", "generationIds": ["gen-…"]}]
+}
+```
+
+Observe should GET this object (or merge CloudWatch lines with `"event":"openrouter_generation"`) and persist those ids — then `GET https://openrouter.ai/api/v1/generation?id=` for official USD. Empty ids → no file and no invented spend. Multiple graph nodes append every official id for the run. `chatcmpl-…` and free-text `gen-` mentions are ignored.
 
 Dogfood `cmtu8jtu00003l1043oi0at41` only uploaded `report.md` because this image used to fetch `<slug>.md` and run one kimi — `_node_io.py` never ran. `MIDKERNEL_FORCE_MD_KIMI=1` restores that fallback. `MIDKERNEL_FORCE_GRAPH=1` forces the graph path.
 
