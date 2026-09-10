@@ -58,10 +58,16 @@ def test_export_sets_openai_key_for_legacy_provider():
     assert env["KIMI_MODEL_MAX_COMPLETION_TOKENS"] == str(DEFAULT_MAX_TOKENS)
     assert env["KIMI_MAX_TOKENS"] == str(DEFAULT_MAX_TOKENS)
     assert env["OPENROUTER_MAX_TOKENS"] == str(DEFAULT_MAX_TOKENS)
-    assert env["MIDKERNEL_OPENROUTER_429_RETRIES"] == "8"
-    assert env["MIDKERNEL_OPENROUTER_RPM"] == "12"
+    assert "GOAL_CONCURRENCY" not in env
     assert "CONCURRENCY" not in env
     assert "AI_GATEWAY_API_KEY" not in env
+
+
+def test_export_passes_goal_concurrency_aliases():
+    env = export_kimi_openrouter_env({"CONCURRENCY": "4"}, "sk-or-v1-x")
+    assert env["GOAL_CONCURRENCY"] == "4"
+    assert env["CONCURRENCY"] == "4"
+    assert env["GRAPH_CONCURRENCY"] == "4"
 
 
 def test_export_honors_openrouter_model_env():

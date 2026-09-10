@@ -23,10 +23,7 @@ import subprocess
 from pathlib import Path
 
 from midkernel_runner.config import RunConfig
-from midkernel_runner.openrouter_retry import (
-    apply_graph_concurrency_env,
-    openrouter_retry_env,
-)
+from midkernel_runner.concurrency import apply_graph_concurrency_env
 from midkernel_runner.openrouter_tokens import (
     OPENROUTER_BASE_URL,
     clamp_max_tokens,
@@ -198,7 +195,6 @@ def export_kimi_openrouter_env(
     cap = resolve_max_tokens(out)
     out.update(max_tokens_env(cap))
     apply_graph_concurrency_env(out)
-    out.update(openrouter_retry_env(out))
     if share_dir is not None:
         share = Path(share_dir)
         out["KIMI_SHARE_DIR"] = str(share)

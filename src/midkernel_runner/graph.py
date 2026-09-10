@@ -25,11 +25,8 @@ from midkernel_runner.kimi import (
     graph_kimi_share_dir,
     write_kimi_openrouter_config,
 )
+from midkernel_runner.concurrency import apply_graph_concurrency_env
 from midkernel_runner.mode import IMAGE_KIMI_BIN, apply_graph_mode_flags
-from midkernel_runner.openrouter_retry import (
-    apply_graph_concurrency_env,
-    openrouter_retry_env,
-)
 
 LOG = logging.getLogger("midkernel.graph")
 USER_AGENT = "midkernel-runner"
@@ -165,11 +162,9 @@ def apply_graph_env(config: RunConfig, environ: dict[str, str] | None = None) ->
     env["WORKDIR"] = config.workdir
     env["OUTPUTS_DIR"] = config.outputs_dir
     apply_graph_mode_flags(env)
-    # App CONCURRENCY / AGENTFLOW_CONCURRENCY / GRAPH_CONCURRENCY /
-    # MIDKERNEL_CONCURRENCY → playbooks Graph() + wrap_kimi. Do not invent
-    # a value when the app left them unset (playbooks still uses GOAL_COUNT).
+    # App GOAL_CONCURRENCY / CONCURRENCY / GRAPH_CONCURRENCY → playbooks
+    # Graph() emit (playbooks #17). Do not invent a default (playbooks uses 2).
     apply_graph_concurrency_env(env)
-    env.update(openrouter_retry_env(env))
     pinned = (env.get("MIDKERNEL_KIMI_BIN") or "").strip()
     already_front = pinned.endswith("kimi-openrouter") or "kimi_graph_bin" in pinned
     if already_front:
@@ -306,8 +301,7 @@ def run_playbooks_graph(
     # playbooks-owned; this wrapper only enforces the whole-run wall.
     LOG.info(
         "agentflow graph playbook=%s pipeline=%s workdir=%s node_io=%s target=%s "
-        "run_timeout=%ss node_timeout=%ss concurrency=%s openrouter_rpm=%s "
-        "openrouter_429_retries=%s",
+        "run_timeout=%ss node_timeout=%ss goal_concurrency=%s",
         config.playbook_slug,
         pipeline,
         config.workdir,
@@ -315,9 +309,7 @@ def run_playbooks_graph(
         os.environ.get("MIDKERNEL_AGENTFLOW_TARGET"),
         config.run_timeout_seconds,
         config.timeout_seconds,
-        os.environ.get("CONCURRENCY") or os.environ.get("AGENTFLOW_CONCURRENCY") or "-",
-        os.environ.get("MIDKERNEL_OPENROUTER_RPM") or "-",
-        os.environ.get("MIDKERNEL_OPENROUTER_429_RETRIES") or "-",
+        os.environ.get("GOAL_CONCURRENCY") or os.environ.get("CONCURRENCY") or "-",
     )
     try:
         result = run(
