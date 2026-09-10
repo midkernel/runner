@@ -295,13 +295,13 @@ def test_run_playbooks_graph_timeout_expired_is_graph_error(tmp_path, monkeypatc
         OUTPUTS_DIR=str(tmp_path / "out"),
         SCAN_PROFILE="low",
     )
-    assert cfg.timeout_seconds == 15 * 60
-    assert cfg.run_timeout_seconds == 11700
+    assert cfg.timeout_seconds == 1800
+    assert cfg.run_timeout_seconds == 22500
 
     def boom(cmd, **kwargs):
         raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs["timeout"])
 
-    with pytest.raises(GraphError, match="run timeout 11700s"):
+    with pytest.raises(GraphError, match="run timeout 22500s"):
         run_playbooks_graph(
             cfg,
             run=boom,
