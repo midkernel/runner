@@ -1,19 +1,5 @@
-# Build the Midkernel agent image. Push to ECR when OIDC is available.
-#
-# IT / midkernel/infra (James lock: IaC only — do not console-edit IAM):
-# Repos created after 2026-07-15 emit GitHub's immutable OIDC `sub`:
-#   repo:OWNER@OWNER-ID/REPO@REPO-ID:ref:refs/heads/BRANCH
-# Terraform currently trusts the pre-2026 name-only shape:
-#   repo:midkernel/{infra,app,runner}:*
-# Those patterns do not match this JWT. This repo (created 2026-09-04):
-#   use_default=true (not an org include_claim_keys customization)
-#   sub_claim_prefix=repo:midkernel@324066512/runner@1357082961
-# Replace allowed_sub_patterns with the immutable prefixes (keep StringLike):
-#   repo:midkernel@324066512/infra@1357082965:*
-#   repo:midkernel@324066512/app@1357082937:*
-#   repo:midkernel@324066512/runner@1357082961:*
-#
-# Do not invent AWS changes from this repo. Do not commit AWS keys.
+# AWS publishing uses its own main-only ECR role from midkernel/infra.
+# Publication requires explicit activation after role bootstrap. See docs/publishing.md.
 name: CI
 
 on:
@@ -29,7 +15,7 @@ env:
   AWS_REGION: us-east-1
   AWS_ACCOUNT_ID: "489470371031"
   ECR_REPOSITORY: midkernel-agentflow-agents
-  OIDC_ROLE: arn:aws:iam::489470371031:role/midkernel-github-actions
+  OIDC_ROLE: arn:aws:iam::489470371031:role/midkernel-github-publish-runner
 
 jobs:
   test:
@@ -42,6 +28,22 @@ jobs:
           python-version: "3.13"
       - run: pip install -e ".[dev]"
       - run: pytest -q
+
+  publisher-readiness:
+    name: Publisher activation
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.activation.outputs.enabled }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check explicit publisher activation
+        id: activation
+        env:
+          ECR_PUBLISHER_ROLE_ARN: ${{ vars.ECR_PUBLISHER_ROLE_ARN }}
+        run: python3 scripts/check_publisher_activation.py
 
   image:
     name: Docker build
@@ -71,8 +73,8 @@ jobs:
 
   ecr:
     name: Push to ECR
-    needs: [test, image]
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: [test, image, publisher-readiness]
+    if: needs.publisher-readiness.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
