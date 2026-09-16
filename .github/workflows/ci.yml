@@ -1,5 +1,5 @@
 # AWS publishing uses its own main-only ECR role from midkernel/infra.
-# Deploy that role before merging this consumer migration. No infrastructure permissions.
+# Publication requires explicit activation after role bootstrap. See docs/publishing.md.
 name: CI
 
 on:
@@ -29,6 +29,22 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest -q
 
+  publisher-readiness:
+    name: Publisher activation
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.activation.outputs.enabled }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check explicit publisher activation
+        id: activation
+        env:
+          ECR_PUBLISHER_ROLE_ARN: ${{ vars.ECR_PUBLISHER_ROLE_ARN }}
+        run: python3 scripts/check_publisher_activation.py
+
   image:
     name: Docker build
     runs-on: ubuntu-latest
@@ -57,8 +73,8 @@ jobs:
 
   ecr:
     name: Push to ECR
-    needs: [test, image]
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
+    needs: [test, image, publisher-readiness]
+    if: needs.publisher-readiness.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
