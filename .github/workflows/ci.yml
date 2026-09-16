@@ -1,5 +1,5 @@
 # AWS publishing uses its own main-only ECR role from midkernel/infra.
-# Deploy that role before merging this consumer migration. No infrastructure permissions.
+# Publication requires explicit activation after role bootstrap. See docs/publishing.md.
 name: CI
 
 on:
