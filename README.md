@@ -196,9 +196,9 @@ When the app RunTasks **without** a command override and `RUN_ID` is set, `CMD m
 
 ## CI / publish
 
-`.github/workflows/ci.yml` is unchanged: PR/push unit tests + `docker build`; `main` / `workflow_dispatch` OIDC push `:<sha>` and `:latest` to ECR.
+`.github/workflows/ci.yml` runs unit tests and credential-free Docker builds on pull requests and main. After explicit publisher activation, main pushes and main `workflow_dispatch` runs publish `:<sha>` and `:latest` to ECR.
 
-GitHub immutable OIDC `sub` for this repo (created 2026-09-04): `repo:midkernel@324066512/runner@1357082961:*`. Infra must trust that prefix. This repo does not change IAM.
+GitHub immutable OIDC `sub` for this repo (created 2026-09-04): `repo:midkernel@324066512/runner@1357082961:ref:refs/heads/main`. Infra grants this exact main subject to the dedicated publisher role. This repo does not change IAM.
 
 ## Local
 
@@ -224,3 +224,7 @@ Dockerfile
 ```
 
 MIT.
+
+## Publisher activation
+
+Image publication uses a dedicated main-only ECR role and requires explicit post-bootstrap activation. Until the repository variable is configured, CI reports publication pending and preserves existing images. Follow [the activation and verification steps](docs/publishing.md).
