@@ -3,7 +3,7 @@
 ECR image that **agentenv/agentflow** launches as each ECS Fargate **node/agent**.
 
 ```text
-<APPROVED_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/midkernel-agentflow-agents
+<account>.dkr.ecr.<region>.amazonaws.com/midkernel-agentflow-agents
 ```
 
 This repo owns the **agent container**. Midkernel app / playbooks are the control plane. Infra already exists in `midkernel/infra` — do not recreate it here.
@@ -40,7 +40,7 @@ Use this ECR repo as `target.image` on every Midkernel `kind: "ecs"` node. Do **
 ```python
 from agentflow import Graph, kimi
 
-IMAGE = "<APPROVED_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/midkernel-agentflow-agents:latest"
+IMAGE = "<account>.dkr.ecr.<region>.amazonaws.com/midkernel-agentflow-agents:latest"
 
 with Graph("midkernel-security-review", working_dir=".") as g:
     kimi(
@@ -107,7 +107,7 @@ Uploaded via the task role (`s3:PutObject`, SSE-S3). Helpers:
   - `KIMI_SHARE_DIR=$WORKDIR/.midkernel/kimi` + OpenRouter `config.toml`
   - `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENROUTER_API_KEY` (`openai_legacy`)
   - `KIMI_API_KEY` / `KIMI_BASE_URL` / `KIMI_MODEL_NAME` (kimi-cli 1.49 dummy `type=kimi` fallback if `--config` still misses)
-  - **`max_tokens = 16384`** on every model alias (never 131072). GOAL `completion-reservation regression` hunters 402'd `in_flight_budget_exhausted` because kimi-cli 1.49 `openai_legacy` omitted `max_tokens` and OpenRouter reserved the model max (131072; wallet could afford ~68k–120k). QA `completion-budget regression` surface-split then 402'd `openrouter_key_limit` with `max_tokens=32768` on the wire (Operator budget-limited key could afford ~13k–25k). The front does **not** copy `max_context_size` (262144) into `max_tokens`. Override via first-wins `MIDKERNEL_OPENROUTER_MAX_TOKENS` / `OPENROUTER_MAX_TOKENS` / `KIMI_MAX_TOKENS` / `KIMI_MODEL_MAX_TOKENS` / `KIMI_MODEL_MAX_COMPLETION_TOKENS` (hard allowed max 65536; any value `>65536` or `>=131072` → 16384, not `min(value, 65536)`). Playbooks `prepare` / `render_kimi_openrouter_config` write the same `max_tokens = 16384` line — keep it in lockstep. If wrap_kimi already set `OPENAI_BASE_URL` / config `base_url` to a localhost injection proxy, kimi-openrouter **must not** rewrite it to `https://openrouter.ai/api/v1`. sitecustomize / OpenAILegacy patch **fails loud** if it does not install, strips `max_completion_tokens`, and always sets outbound `max_tokens` to the clamped value. 429 retries stay in playbooks `wrap_kimi` (8 tries / 90s). Account 20 RPM (`openrouter_new_account`) is an OpenRouter key tier — see [OpenRouter 429 RPM](#openrouter-429-rpm-goal-hunter-fan-out). `apply_graph_env` passes `GOAL_CONCURRENCY` / `CONCURRENCY` through to graph emit.
+  - **`max_tokens = 16384`** on every model alias (never 131072). GOAL `completion-reservation regression` hunters 402'd `in_flight_budget_exhausted` because kimi-cli 1.49 `openai_legacy` omitted `max_tokens` and OpenRouter reserved the model max (131072; wallet could afford ~68k–120k). The front does **not** copy `max_context_size` (262144) into `max_tokens`. Override via first-wins `MIDKERNEL_OPENROUTER_MAX_TOKENS` / `OPENROUTER_MAX_TOKENS` / `KIMI_MAX_TOKENS` / `KIMI_MODEL_MAX_TOKENS` / `KIMI_MODEL_MAX_COMPLETION_TOKENS` (hard allowed max 65536; any value `>65536` or `>=131072` → 16384, not `min(value, 65536)`). Playbooks `prepare` / `render_kimi_openrouter_config` write the same `max_tokens = 16384` line — keep it in lockstep. If wrap_kimi already set `OPENAI_BASE_URL` / config `base_url` to a localhost injection proxy, kimi-openrouter **must not** rewrite it to `https://openrouter.ai/api/v1`. sitecustomize / OpenAILegacy patch **fails loud** if it does not install, strips `max_completion_tokens`, and always sets outbound `max_tokens` to the clamped value. 429 retries stay in playbooks `wrap_kimi` (8 tries / 90s). Account 20 RPM (`openrouter_new_account`) is an OpenRouter key tier — see [OpenRouter 429 RPM](#openrouter-429-rpm-goal-hunter-fan-out). `apply_graph_env` passes `GOAL_CONCURRENCY` / `CONCURRENCY` through to graph emit.
 
 **Playbooks coordination:** `_node_io.graph_runtime_env()` / `kimi_io_env()` do not need to strip these keys (LocalRunner copies `os.environ` then overlays node env). Harden playbooks by passing `KIMI_SHARE_DIR`, `KIMI_BASE_URL`, `KIMI_MODEL_NAME`, `OPENAI_*`, and `OPENROUTER_*` through node env. Separately, playbooks `extra_args=["--config", …]` only defines `models.midkernel` while agentflow adds `--model moonshotai/kimi-k3` — that mismatch is what produced `LLM not set` on `review-config regression` / `threat-model-config regression`. Runner now covers the fallback; playbooks should still add the OpenRouter slug aliases (or drop the mismatched `--model`) so `--config` itself resolves.
 - After cloning playbooks, runner `chmod +x` + `--version` short-circuit on `pipelines/_node_io.py` so agentflow `kimi_ready` (`<executable> --version` in the prepared local shell) execs `MIDKERNEL_KIMI_BIN` instead of wrap_kimi. PATH `kimi --version` also execs the real binary with no prepare/publish
@@ -142,7 +142,7 @@ Aligned with `midkernel/app` `src/lib/agentflow-contract.ts`. App names and runn
 | `GITHUB_NAME` | yes (clone) | — | |
 | `PLAYBOOK_SLUG` | no | `PLAYBOOK` | default `security-review` |
 | `SCAN_PROFILE` | no | `PROFILE` | `low` \| `balanced` \| `max` |
-| `AGENT_TIMEOUT_SECONDS` | no | — | **per-node hard** kimi / review budget. Default `PROFILE_TIMEOUT_SECONDS` (`low`=1800 / 30m, `balanced`=3600 / 1h, `max`=7200 / 2h). Playbooks GOAL nodes use the same profile table independently. UI may set this per run as the hard ceiling; playbooks' **soft** cutoff is 90% of that hard value (empty RESULT + continue, not a hard kill). QA `node-timeout regression` hunter-1 died exit 124 after 900s once runner#12's 11700s wall clock held. Operator lock 2026-09-10 / QA `hunter-failure regression`: 1800s hard held but hunter emptied RESULT and `fail_fast` killed GOAL — `fail_fast` is playbooks-owned; runner does not inject it. |
+| `AGENT_TIMEOUT_SECONDS` | no | — | **per-node hard** kimi / review budget. Default `PROFILE_TIMEOUT_SECONDS` (`low`=1800 / 30m, `balanced`=3600 / 1h, `max`=7200 / 2h). Playbooks GOAL nodes use the same profile table independently. UI may set this per run as the hard ceiling; playbooks' **soft** cutoff is 90% of that hard value (empty RESULT + continue, not a hard kill). QA `node-timeout regression` hunter-1 died exit 124 after 900s once runner#12's 11700s wall clock held. |
 | `AGENT_RUN_TIMEOUT_SECONDS` | no | — | **whole-run** wall clock for `ecs-in-task.sh` / `agentflow run`. Default is `node_timeout * serial_kimi_node_budget + 900` (prepare 10m + publish 5m). GOAL serial budget is 6 fixed kimi nodes + `GOAL_COUNT` hunters (default 12). UI may override this per run. Do **not** set this to 900 on `goal-security-review`: QA `cmtuschdc0003lb04ktzewa7k` (low, DeepSeek) died at exactly 900s (`00:25:27Z` → `00:40:27Z` `TimeoutExpired`) after threat-model ~9m + goal-author ~4.5m left ~82s for surface-split. |
 | `THREAT_PIN` | no | `THREAT` | max 80 chars |
 | `GITHUB_REF` | no | — | shallow clone `--branch` |
@@ -173,7 +173,7 @@ Run `request-rate regression` died `exit 75` with `limit_source=openrouter_new_a
 | **Client** | `wrap_kimi` retries 429 up to 8 times, `Retry-After` through 90s | Already in midkernel/playbooks `_node_io.py`. This image does **not** add a second retry/RPM client. |
 | **Graph** | Default `GOAL_CONCURRENCY=2` (playbooks #17). App picker `1\|2\|4\|6` on `RunTask`. | App sets `GOAL_CONCURRENCY` or `CONCURRENCY`; runner passes it through to graph emit. |
 
-**What Operator can do on the OpenRouter account** (tier only — no RPM slider):
+**What the operator can do on the OpenRouter account** (tier only — no RPM slider):
 
 1. [Credits](https://openrouter.ai/settings/credits) on the account behind `midkernel/dev/harness/openrouter-api-key`. Confirm lifetime purchases and that the key is not stuck on `is_free_tier` / `openrouter_new_account`.
 2. Buy credits if the wallet is $0 / the budget-limited cap that already 402'd `completion-budget regression`.
