@@ -1,6 +1,6 @@
 # midkernel/runner
 
-ECR image that **agentenv/agentflow** launches as each ECS Fargate **node/agent**.
+The container image that runs each [Midkernel Scan](https://www.midkernel.com/security/scan) workflow in an isolated, unprivileged sandbox that ends with the run. How runs are sandboxed: [midkernel.com/security/trust](https://www.midkernel.com/security/trust).
 
 ```text
 <account>.dkr.ecr.<region>.amazonaws.com/midkernel-agentflow-agents
