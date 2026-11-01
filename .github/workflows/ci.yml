@@ -11,6 +11,12 @@ on:
 permissions:
   contents: read
 
+# Only a newer run of the same PR supersedes work. Pushes/manual runs (including
+# reruns) have distinct groups and never cancel another run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}-{1}', github.run_id, github.run_attempt) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: midkernel-agentflow-agents
@@ -51,10 +57,25 @@ jobs:
   image:
     name: Docker build
     runs-on: ubuntu-latest
+    env:
+      PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Build/test the event's merge commit, not the PR branch in isolation.
+          ref: ${{ github.sha }}
+          # Direct base/head trees and the merge's immediate parents suffice.
+          fetch-depth: 2
+      - name: Decide image work
+        id: image-plan
+        run: python3 scripts/ci_image_affected.py plan
       - uses: docker/setup-buildx-action@v3
+        id: buildx
+        if: steps.image-plan.outputs.decision == 'build'
       - name: Build (no push)
+        id: build
+        if: steps.image-plan.outputs.decision == 'build'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -62,6 +83,14 @@ jobs:
           tags: midkernel-agentflow-agents:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Validate Docker build result
+        if: always()
+        env:
+          PLAN_OUTCOME: ${{ steps.image-plan.outcome }}
+          PLAN_DECISION: ${{ steps.image-plan.outputs.decision }}
+          BUILDX_OUTCOME: ${{ steps.buildx.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+        run: python3 scripts/ci_image_affected.py gate
 
   oidc-claims:
     name: OIDC claims (debug)
