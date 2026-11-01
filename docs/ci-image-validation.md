@@ -97,3 +97,28 @@ new fixtures still add work; net savings and eligible-doc frequency remain
 unmeasured. No
 manual dispatch, rerun, publisher activation or production publishing is part of
 this validation.
+
+## Contributor-hook follow-up
+
+The historical pending paragraph above describes the image implementation at
+submission. The subsequent
+[runner#21 acceptance](https://github.com/midkernel/runner/pull/21#issuecomment-6560596812)
+records merge `28e520198b731478ece2910e9516a1b216148e03` and these attempt-1 results:
+
+- [PR 41325101194](https://github.com/midkernel/runner/actions/runs/41325101194/attempts/1): 24s workflow wall proxy, 21s image job / 2s build step; 19s unit job, 323 passed in 6.57s.
+- [Main 41325695439](https://github.com/midkernel/runner/actions/runs/41325695439/attempts/1): 22s workflow wall proxy, 15s image job / 3s build step; 19s unit job, 323 passed in 6.35s.
+
+Both image builds executed and each log contains 10 cached BuildKit records.
+Those build-time reductions cannot be attributed to image skipping or hooks.
+The prior samples above remain 42s/102s PR and 95s main; the unit job increased
+from 13–16s to 19s with the added CI cases. Publisher activation was skipped
+on PR and checked on main; ECR remained skipped. No publishing or live canary
+was activated. Eligible docs-only skip savings and real PR cancellation remain
+unobserved.
+
+The follow-up [contributor setup](prepush.md) installs only the existing config
+contract test as a local quick gate. The workflow, image helper and all existing
+tests are unchanged from that merged base. Full CI remains intact. **Hosted
+after results for this hook adoption are pending.** Local offline checks and
+local bare-push fixtures establish hook behavior, not hosted timing savings,
+runtime coverage or all-history validation. No CI rerun/dispatch was requested.

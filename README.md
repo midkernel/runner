@@ -202,6 +202,10 @@ GitHub immutable OIDC `sub` for this repo (created 2026-09-04): `repo:midkernel@
 
 ## Local
 
+Contributors: run `python3 scripts/setup-dev.py` to prepare `.venv` and install
+the worktree's [bounded pre-push contract check](docs/prepush.md). Ordinary pip
+installation below does not enroll hooks; CI still runs the full suite.
+
 ```bash
 pip install -e ".[dev]"
 pytest -q
